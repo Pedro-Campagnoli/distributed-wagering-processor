@@ -8,5 +8,12 @@ export default defineConfig({
   password: process.env.POSTGRES_PASSWORD ?? 'postgres',
   dbName: process.env.POSTGRES_DB ?? 'wagering',
 
+  discovery: {
+    warnWhenNoEntities: false,
+  },
+  migrations: {
+    path: './dist/migrations',
+    pathTs: './src/migrations',
+  },
   extensions: [Migrator],
 });
