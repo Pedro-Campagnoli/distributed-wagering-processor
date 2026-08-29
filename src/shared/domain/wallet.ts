@@ -21,6 +21,11 @@ export interface OpenWalletProps {
   initialBalance: Money;
 }
 
+export interface WalletBalanceChange {
+  balanceBefore: Money;
+  balanceAfter: Money;
+}
+
 export class Wallet {
   private constructor(
     public readonly id: string,
@@ -73,7 +78,7 @@ export class Wallet {
     return this._updatedAt;
   }
 
-  credit(money: Money): void {
+  credit(money: Money): WalletBalanceChange | undefined {
     this.assertSameCurrency(money);
     this.assertNonNegative(money);
 
@@ -81,12 +86,19 @@ export class Wallet {
       return;
     }
 
+    const balanceBefore = this._balance;
+
     this._balance = this._balance.add(money);
     this._version++;
     this._updatedAt = new Date();
+
+    return {
+      balanceBefore,
+      balanceAfter: this._balance,
+    };
   }
 
-  debit(money: Money): void {
+  debit(money: Money): WalletBalanceChange | undefined {
     this.assertSameCurrency(money);
     this.assertNonNegative(money);
 
@@ -98,9 +110,16 @@ export class Wallet {
       throw new InsufficientBalanceError();
     }
 
+    const balanceBefore = this._balance;
+
     this._balance = this._balance.subtract(money);
     this._version++;
     this._updatedAt = new Date();
+
+    return {
+      balanceBefore,
+      balanceAfter: this._balance,
+    };
   }
 
   private assertSameCurrency(money: Money): void {

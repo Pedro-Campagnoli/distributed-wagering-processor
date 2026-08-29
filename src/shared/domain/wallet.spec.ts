@@ -109,7 +109,7 @@ describe('Wallet', () => {
         }),
       });
 
-      wallet.credit(
+      const change = wallet.credit(
         Money.from({
           amount: '50.00',
           currency: 'BRL',
@@ -126,6 +126,24 @@ describe('Wallet', () => {
       ).toBe(true);
 
       expect(wallet.version).toBe(2);
+
+      expect(
+        change?.balanceBefore.equals(
+          Money.from({
+            amount: '100.00',
+            currency: 'BRL',
+          }),
+        ),
+      ).toBe(true);
+
+      expect(
+        change?.balanceAfter.equals(
+          Money.from({
+            amount: '150.00',
+            currency: 'BRL',
+          }),
+        ),
+      ).toBe(true);
     });
 
     it('should update updatedAt when balance changes', () => {
@@ -170,8 +188,9 @@ describe('Wallet', () => {
         updatedAt,
       });
 
-      wallet.credit(Money.zero('BRL'));
+      const change = wallet.credit(Money.zero('BRL'));
 
+      expect(change).toBeUndefined();
       expect(wallet.balance.toString()).toBe('100.00 BRL');
       expect(wallet.version).toBe(3);
       expect(wallet.updatedAt).toEqual(updatedAt);
@@ -222,7 +241,7 @@ describe('Wallet', () => {
         }),
       });
 
-      wallet.debit(
+      const change = wallet.debit(
         Money.from({
           amount: '40.00',
           currency: 'BRL',
@@ -239,6 +258,24 @@ describe('Wallet', () => {
       ).toBe(true);
 
       expect(wallet.version).toBe(2);
+
+      expect(
+        change?.balanceBefore.equals(
+          Money.from({
+            amount: '100.00',
+            currency: 'BRL',
+          }),
+        ),
+      ).toBe(true);
+
+      expect(
+        change?.balanceAfter.equals(
+          Money.from({
+            amount: '60.00',
+            currency: 'BRL',
+          }),
+        ),
+      ).toBe(true);
     });
 
     it('should allow debit equal to the current balance', () => {
@@ -328,8 +365,9 @@ describe('Wallet', () => {
         updatedAt,
       });
 
-      wallet.debit(Money.zero('BRL'));
+      const change = wallet.debit(Money.zero('BRL'));
 
+      expect(change).toBeUndefined();
       expect(wallet.balance.toString()).toBe('100.00 BRL');
       expect(wallet.version).toBe(3);
       expect(wallet.updatedAt).toEqual(updatedAt);

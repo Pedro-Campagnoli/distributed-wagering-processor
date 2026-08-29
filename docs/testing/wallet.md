@@ -8,6 +8,19 @@ Alguns testes utilizam timestamps fixos para manter a suíte determinística.
 
 Essas datas representam apenas um estado inicial controlado. A implementação continua utilizando `new Date()` para registrar o horário real das alterações, enquanto os testes evitam depender do relógio da execução.
 
+## WalletBalanceChange
+
+`WalletBalanceChange` representa o resultado de uma alteração efetiva de saldo.
+
+Ele contém apenas:
+
+- `balanceBefore`;
+- `balanceAfter`.
+
+A wallet continua responsável exclusivamente por aplicar e proteger a movimentação. Ela não cria nem conhece `WalletLedgerEntry`.
+
+Essa separação permite que outras partes da aplicação utilizem o resultado da movimentação para registrar o ledger sem acoplar a wallet à implementação do histórico financeiro.
+
 ---
 
 ## Opening
@@ -84,6 +97,21 @@ A `version` só é incrementada quando o saldo realmente muda.
 
 Por esse motivo, um crédito de `0.00` não produz nenhuma alteração de estado.
 
+### Resultado da movimentação
+
+Quando um crédito altera o saldo, `credit()` retorna um `WalletBalanceChange` contendo:
+
+- `balanceBefore`: saldo da wallet antes da movimentação;
+- `balanceAfter`: saldo da wallet após a movimentação.
+
+Esse retorno descreve o efeito financeiro produzido pela operação sem expor ou alterar o estado interno da wallet.
+
+Os valores podem ser utilizados posteriormente para registrar a movimentação correspondente no ledger.
+
+Como `Money` é imutável, `balanceBefore` continua representando com segurança o saldo anterior mesmo depois que `_balance` recebe uma nova instância.
+
+Quando o valor creditado é `0.00`, nenhuma movimentação acontece e `credit()` retorna `undefined`.
+
 ### Créditos negativos
 
 Embora `Money` possa representar valores negativos produzidos internamente por operações como `subtract()` e `negate()`, `Wallet.credit()` não aceita valores negativos como comando de movimentação.
@@ -124,6 +152,19 @@ Cenários:
 - não altera saldo, `version` ou `updatedAt` ao debitar zero;
 - rejeita débitos em moeda diferente da moeda da wallet;
 - rejeita valores negativos como entrada de `debit()`.
+
+### Resultado da movimentação
+
+Quando um débito altera o saldo, `debit()` retorna um `WalletBalanceChange` contendo:
+
+- `balanceBefore`: saldo da wallet antes da movimentação;
+- `balanceAfter`: saldo da wallet após a movimentação.
+
+Esse resultado permite descrever exatamente a alteração produzida pela wallet e poderá ser utilizado para criar o lançamento correspondente no ledger.
+
+Quando o débito é rejeitado, nenhuma alteração é realizada. A operação lança o erro correspondente e não retorna um `WalletBalanceChange`.
+
+Quando o valor debitado é `0.00`, a operação não altera o estado da wallet e `debit()` retorna `undefined`.
 
 ### Saldo não negativo
 
@@ -215,13 +256,13 @@ Não existe conversão automática de moeda dentro da `Wallet`.
 
 ## Resumo da cobertura
 
-| Área                | O que é validado                                                   | Garantia principal                                                 |
-| ------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| **Opening**         | Estado inicial, saldo zero, versão e timestamps                    | A wallet nasce com estado consistente                              |
-| **Rehydration**     | Restauração do estado persistido                                   | Estado existente não é reinicializado                              |
-| **Credit**          | Crédito, versão, timestamp, zero e entradas inválidas              | Créditos alteram o saldo de forma explícita e segura               |
-| **Debit**           | Débito, saldo insuficiente, versão, timestamp e entradas inválidas | Débitos nunca produzem saldo negativo                              |
-| **Currency Safety** | Créditos e débitos em moedas diferentes                            | Movimentações não misturam moedas                                  |
-| **Negative Values** | Rejeição de créditos e débitos negativos                           | O sentido da movimentação é definido pela operação, não pelo sinal |
+| Área                | O que é validado                                                                             | Garantia principal                                                               |
+| ------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **Opening**         | Estado inicial, saldo zero, saldo negativo, versão e timestamps                              | A wallet nasce com estado consistente e saldo não negativo                       |
+| **Rehydration**     | Restauração do estado persistido                                                             | Estado existente não é reinicializado                                            |
+| **Credit**          | Crédito, saldo anterior/posterior, versão, timestamp, zero e entradas inválidas              | Créditos alteram o saldo de forma explícita e descrevem a movimentação produzida |
+| **Debit**           | Débito, saldo anterior/posterior, saldo insuficiente, versão, timestamp e entradas inválidas | Débitos nunca produzem saldo negativo e descrevem a movimentação produzida       |
+| **Currency Safety** | Créditos e débitos em moedas diferentes                                                      | Movimentações não misturam moedas                                                |
+| **Negative Values** | Rejeição de créditos e débitos negativos                                                     | O sentido da movimentação é definido pela operação, não pelo sinal               |
 
 A suíte atual cobre a abertura, reidratação e as operações de crédito e débito da `Wallet`, incluindo suas principais invariantes de saldo, moeda e versionamento.
