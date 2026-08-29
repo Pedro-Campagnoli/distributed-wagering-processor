@@ -20,22 +20,22 @@ export class Money {
     public readonly currency: string,
   ) {}
 
-  static from({ amount, currency }: MoneyProps): Money {
-    if (!Money.AMOUNT_PATTERN.test(amount)) {
-      throw new InvalidMoneyAmountError(amount);
+  static from(props: MoneyProps): Money {
+    if (!Money.AMOUNT_PATTERN.test(props.amount)) {
+      throw new InvalidMoneyAmountError(props.amount);
     }
 
-    if (!Money.CURRENCY_PATTERN.test(currency)) {
-      throw new InvalidCurrencyError(currency);
+    if (!Money.CURRENCY_PATTERN.test(props.currency)) {
+      throw new InvalidCurrencyError(props.currency);
     }
 
-    const value = new Decimal(amount);
+    const value = new Decimal(props.amount);
 
     if (!value.isFinite()) {
-      throw new InvalidMoneyAmountError(amount);
+      throw new InvalidMoneyAmountError(props.amount);
     }
 
-    return new Money(value, currency);
+    return new Money(value, props.currency);
   }
 
   static zero(currency: string): Money {

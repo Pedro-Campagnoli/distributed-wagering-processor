@@ -32,17 +32,17 @@ export class Wallet {
     private _updatedAt: Date,
   ) {}
 
-  static open({ id, playerId, initialBalance }: OpenWalletProps): Wallet {
-    if (initialBalance.isNegative()) {
-      throw new InvalidMoneyAmountError(initialBalance.toString());
+  static open(props: OpenWalletProps): Wallet {
+    if (props.initialBalance.isNegative()) {
+      throw new InvalidMoneyAmountError(props.initialBalance.toString());
     }
     const now = new Date();
 
     return new Wallet(
-      id,
-      playerId,
-      initialBalance.currency,
-      initialBalance,
+      props.id,
+      props.playerId,
+      props.initialBalance.currency,
+      props.initialBalance,
       1,
       now,
       now,
