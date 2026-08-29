@@ -19,6 +19,7 @@
     "test:money": "bun test src/shared/domain/money.spec.ts",
     "test:wallet": "bun test src/shared/domain/wallet.spec.ts",
     "test:ledger": "bun test src/shared/domain/wallet-ledger-entry.spec.ts",
+    "test:wager": "bun test src/shared/domain/wager-transaction.spec.ts",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
