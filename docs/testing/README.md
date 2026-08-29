@@ -3,3 +3,4 @@
 ## Unit tests
 
 - [Money](./money.md)
+- [Wallet](./wallet.md)
