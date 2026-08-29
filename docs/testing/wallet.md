@@ -19,11 +19,16 @@ Cenários:
 - cria uma wallet com `id`, `playerId`, moeda e saldo inicial corretos;
 - inicia a `version` em `1`;
 - permite a criação de uma wallet com saldo zero;
+- rejeita a criação de uma wallet com saldo inicial negativo;
 - inicializa `createdAt` e `updatedAt` com o mesmo timestamp.
 
 A moeda da wallet é derivada diretamente do `initialBalance`.
 
 Isso evita manter duas fontes diferentes para a moeda durante a abertura da wallet. O saldo inicial já é representado por uma instância válida de `Money`, portanto a wallet utiliza a moeda contida nesse value object.
+
+Embora `Money` possa representar valores negativos produzidos internamente por operações como `subtract()` e `negate()`, uma wallet não pode ser aberta com saldo negativo.
+
+Essa validação garante que a `Wallet` já nasça respeitando a invariante de saldo não negativo.
 
 A `version` começa em `1` na abertura e representa a versão atual do estado financeiro da wallet.
 

@@ -52,6 +52,21 @@ describe('Wallet', () => {
       expect(wallet.createdAt).toBeInstanceOf(Date);
       expect(wallet.updatedAt).toEqual(wallet.createdAt);
     });
+
+    it('should reject negative initial balance', () => {
+      const negative = Money.from({
+        amount: '100.00',
+        currency: 'BRL',
+      }).negate();
+
+      expect(() =>
+        Wallet.open({
+          id: 'wallet-1',
+          playerId: 'player-1',
+          initialBalance: negative,
+        }),
+      ).toThrow(InvalidMoneyAmountError);
+    });
   });
 
   describe('rehydration', () => {

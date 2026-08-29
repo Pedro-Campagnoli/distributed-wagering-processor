@@ -33,6 +33,9 @@ export class Wallet {
   ) {}
 
   static open({ id, playerId, initialBalance }: OpenWalletProps): Wallet {
+    if (initialBalance.isNegative()) {
+      throw new InvalidMoneyAmountError(initialBalance.toString());
+    }
     const now = new Date();
 
     return new Wallet(
