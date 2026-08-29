@@ -39,3 +39,25 @@ export class InvalidLedgerAmountError extends Error {
     this.name = 'InvalidLedgerAmountError';
   }
 }
+
+export class MissingTransactionReferenceError extends Error {
+  constructor() {
+    super('Transaction reference is required');
+    this.name = 'MissingTransactionReferenceError';
+  }
+}
+
+export class InvalidTransactionStateError extends Error {
+  constructor(currentStatus: string, transition: string) {
+    super(`Cannot ${transition} transaction from status ${currentStatus}`);
+
+    this.name = 'InvalidTransactionStateError';
+  }
+}
+
+export class LedgerDirectionUnavailableError extends Error {
+  constructor() {
+    super('Ledger direction is unavailable for this transaction');
+    this.name = 'LedgerDirectionUnavailableError';
+  }
+}
