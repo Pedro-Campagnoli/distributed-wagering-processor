@@ -25,3 +25,17 @@ export class InsufficientBalanceError extends Error {
     this.name = 'InsufficientBalanceError';
   }
 }
+
+export class UnbalancedLedgerEntryError extends Error {
+  constructor() {
+    super('Ledger entry balance is inconsistent');
+    this.name = 'UnbalancedLedgerEntryError';
+  }
+}
+
+export class InvalidLedgerAmountError extends Error {
+  constructor() {
+    super('Ledger entry amount must be greater than zero');
+    this.name = 'InvalidLedgerAmountError';
+  }
+}
