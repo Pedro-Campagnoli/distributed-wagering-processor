@@ -5,6 +5,7 @@ import type {
   WagerTransaction,
   WagerTransactionKind,
 } from '../../../domain/wager-transaction.js';
+import { WagerTransactionStatus } from '../../../domain/wager-transaction.js';
 import { WagerTransactionMapper } from '../mappers/wager-transaction.mapper.js';
 import { WagerTransactionOrmEntity } from '../entities/wager-transaction.orm-entity.js';
 
@@ -15,6 +16,21 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
     const entity = WagerTransactionMapper.toOrm(transaction);
 
     this.entityManager.persist(entity);
+
+    await this.entityManager.flush();
+  }
+
+  async update(transaction: WagerTransaction): Promise<void> {
+    const entity = await this.entityManager.findOne(
+      WagerTransactionOrmEntity,
+      transaction.id,
+    );
+
+    if (!entity) {
+      return;
+    }
+
+    WagerTransactionMapper.updateOrm(transaction, entity);
 
     await this.entityManager.flush();
   }
@@ -78,5 +94,28 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
     }
 
     return WagerTransactionMapper.toDomain(entity);
+  }
+
+  async findPendingReferencesDue(
+    now: Date,
+    limit: number,
+  ): Promise<WagerTransaction[]> {
+    const entities = await this.entityManager.find(
+      WagerTransactionOrmEntity,
+      {
+        status: WagerTransactionStatus.PendingReference,
+        nextReferenceRetryAt: { $lte: now },
+      },
+      {
+        orderBy: {
+          nextReferenceRetryAt: 'asc',
+          createdAt: 'asc',
+          id: 'asc',
+        },
+        limit,
+      },
+    );
+
+    return entities.map(WagerTransactionMapper.toDomain);
   }
 }

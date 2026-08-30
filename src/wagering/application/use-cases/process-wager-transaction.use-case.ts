@@ -52,6 +52,13 @@ interface ProcessedWagerTransaction {
 
 type IdGenerator = () => string;
 
+export const MAX_REFERENCE_RETRY_ATTEMPTS = 5;
+export const REFERENCE_RETRY_BASE_DELAY_MS = 1_000;
+
+function referenceRetryDelayMs(attempts: number): number {
+  return REFERENCE_RETRY_BASE_DELAY_MS * 2 ** attempts;
+}
+
 export class ProcessWagerTransactionUseCase {
   constructor(
     private readonly entityManager: EntityManager,
@@ -161,7 +168,11 @@ export class ProcessWagerTransactionUseCase {
         }
 
         if (!reference) {
-          transaction.markPendingReference();
+          transaction.markPendingReference(
+            new Date(
+              transaction.createdAt.getTime() + REFERENCE_RETRY_BASE_DELAY_MS,
+            ),
+          );
         }
       }
 
@@ -184,12 +195,93 @@ export class ProcessWagerTransactionUseCase {
     });
   }
 
+  async reprocessPending(
+    transactionId: string,
+    walletId: string,
+    now: Date = new Date(),
+  ): Promise<ProcessWagerTransactionOutput | undefined> {
+    return this.entityManager.transactional(async (tx) => {
+      const walletRepository = new MikroOrmWalletRepository(tx);
+      const wagerTransactionRepository = new MikroOrmWagerTransactionRepository(
+        tx,
+      );
+      const walletLedgerEntryRepository =
+        new MikroOrmWalletLedgerEntryRepository(tx);
+
+      const wallet = await walletRepository.findById(walletId, {
+        lock: true,
+      });
+
+      if (!wallet) {
+        throw new WalletNotFoundError(walletId);
+      }
+
+      const transaction =
+        await wagerTransactionRepository.findById(transactionId);
+
+      if (
+        !transaction ||
+        transaction.status !== WagerTransactionStatus.PendingReference
+      ) {
+        return;
+      }
+
+      const reference =
+        await wagerTransactionRepository.findByProviderAndExternalTransactionId(
+          transaction.providerId,
+          transaction.referenceExternalTransactionId!,
+        );
+
+      if (!reference) {
+        const attempt = transaction.referenceRetryAttempts + 1;
+
+        transaction.recordReferenceRetry(
+          new Date(now.getTime() + referenceRetryDelayMs(attempt)),
+        );
+
+        if (attempt >= MAX_REFERENCE_RETRY_ATTEMPTS) {
+          transaction.reject('REFERENCE_NOT_FOUND_AFTER_RETRIES');
+        }
+
+        transaction.recordObservedBalance(wallet.balance);
+
+        await wagerTransactionRepository.update(transaction);
+
+        return {
+          transaction,
+          wallet,
+          observedBalance: wallet.balance,
+        };
+      }
+
+      const result = this.processTransaction(wallet, transaction, reference);
+      const observedBalance = result.wallet.balance;
+
+      result.transaction.recordObservedBalance(observedBalance);
+
+      await wagerTransactionRepository.update(result.transaction);
+
+      if (result.ledgerEntry) {
+        await walletRepository.update(result.wallet);
+        await walletLedgerEntryRepository.insert(result.ledgerEntry);
+      }
+
+      return {
+        ...result,
+        observedBalance,
+      };
+    });
+  }
+
   private processTransaction(
     wallet: Wallet,
     transaction: WagerTransaction,
     reference?: WagerTransaction,
   ): ProcessedWagerTransaction {
-    if (transaction.status === WagerTransactionStatus.PendingReference) {
+    if (
+      transaction.status === WagerTransactionStatus.PendingReference &&
+      !reference
+    ) {
       return {
         transaction,
         wallet,

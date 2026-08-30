@@ -454,6 +454,23 @@
           ],
           "mappedType": "enum"
         },
+        "next_reference_retry_at": {
+          "name": "next_reference_retry_at",
+          "type": "timestamptz(6)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "collation": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
         "observed_balance": {
           "name": "observed_balance",
           "type": "numeric(20,2)",
@@ -556,6 +573,23 @@
           "enumItems": [],
           "mappedType": "string"
         },
+        "reference_retry_attempts": {
+          "name": "reference_retry_attempts",
+          "type": "int",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "0",
+          "comment": null,
+          "collation": null,
+          "enumItems": [],
+          "mappedType": "integer"
+        },
         "reference_transaction_id": {
           "name": "reference_transaction_id",
           "type": "uuid",
@@ -644,6 +678,7 @@
         },
         {
           "columnNames": [
+            "next_reference_retry_at",
             "created_at",
             "id"
           ],
@@ -725,6 +760,12 @@
           "expression": "(kind <> ALL (ARRAY['REFUND'::character varying, 'ROLLBACK'::character varying])) OR (reference_external_transaction_id IS NOT NULL)",
           "definition": "CHECK ((((kind)::text <> ALL ((ARRAY['REFUND'::character varying, 'ROLLBACK'::character varying])::text[])) OR (reference_external_transaction_id IS NOT NULL)))",
           "columnName": "kind"
+        },
+        {
+          "name": "wager_transactions_reference_retry_attempts_non_negative_check",
+          "expression": "reference_retry_attempts >= 0",
+          "definition": "CHECK ((reference_retry_attempts >= 0))",
+          "columnName": "reference_retry_attempts"
         },
         {
           "name": "wager_transactions_status_check",

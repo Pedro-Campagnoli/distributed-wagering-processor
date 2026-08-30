@@ -37,6 +37,8 @@ export class WagerTransactionMapper {
               amount: entity.observedBalance,
               currency: entity.currency,
             }),
+      referenceRetryAttempts: entity.referenceRetryAttempts,
+      nextReferenceRetryAt: entity.nextReferenceRetryAt ?? undefined,
     });
   }
 
@@ -62,6 +64,8 @@ export class WagerTransactionMapper {
     entity.failureCode = transaction.failureCode ?? null;
     entity.observedBalance =
       transaction.observedBalance?.toJSON().amount ?? null;
+    entity.referenceRetryAttempts = transaction.referenceRetryAttempts;
+    entity.nextReferenceRetryAt = transaction.nextReferenceRetryAt ?? null;
     entity.createdAt = transaction.createdAt;
     entity.processedAt = transaction.processedAt ?? null;
 
@@ -76,5 +80,9 @@ export class WagerTransactionMapper {
     entity.referenceTransactionId = transaction.referenceTransactionId ?? null;
     entity.failureCode = transaction.failureCode ?? null;
     entity.processedAt = transaction.processedAt ?? null;
+    entity.observedBalance =
+      transaction.observedBalance?.toJSON().amount ?? null;
+    entity.referenceRetryAttempts = transaction.referenceRetryAttempts;
+    entity.nextReferenceRetryAt = transaction.nextReferenceRetryAt ?? null;
   }
 }

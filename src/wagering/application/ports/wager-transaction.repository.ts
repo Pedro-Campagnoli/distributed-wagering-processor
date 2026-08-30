@@ -6,6 +6,8 @@ import {
 export interface WagerTransactionRepository {
   insert(transaction: WagerTransaction): Promise<void>;
 
+  update(transaction: WagerTransaction): Promise<void>;
+
   findById(id: string): Promise<WagerTransaction | undefined>;
 
   findByProviderAndExternalTransactionId(
@@ -22,4 +24,9 @@ export interface WagerTransactionRepository {
   findByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<WagerTransaction | undefined>;
+
+  findPendingReferencesDue(
+    now: Date,
+    limit: number,
+  ): Promise<WagerTransaction[]>;
 }

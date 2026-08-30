@@ -59,6 +59,8 @@ export interface WagerTransactionState {
   failureCode?: FailureCode;
   processedAt?: Date;
   observedBalance?: Money;
+  referenceRetryAttempts?: number;
+  nextReferenceRetryAt?: Date;
 }
 
 export class WagerTransaction {
@@ -81,6 +83,8 @@ export class WagerTransaction {
     private _failureCode?: FailureCode,
     private _processedAt?: Date,
     private _observedBalance?: Money,
+    private _referenceRetryAttempts: number = 0,
+    private _nextReferenceRetryAt?: Date,
   ) {}
 
   static create(props: CreateWagerTransactionProps): WagerTransaction {
@@ -129,6 +133,8 @@ export class WagerTransaction {
       state.failureCode,
       state.processedAt,
       state.observedBalance,
+      state.referenceRetryAttempts ?? 0,
+      state.nextReferenceRetryAt,
     );
   }
 
@@ -150,6 +156,14 @@ export class WagerTransaction {
 
   get observedBalance(): Money | undefined {
     return this._observedBalance;
+  }
+
+  get referenceRetryAttempts(): number {
+    return this._referenceRetryAttempts;
+  }
+
+  get nextReferenceRetryAt(): Date | undefined {
+    return this._nextReferenceRetryAt;
   }
 
   isTerminal(): boolean {
@@ -194,7 +208,7 @@ export class WagerTransaction {
     }
   }
 
-  markPendingReference(): void {
+  markPendingReference(nextRetryAt?: Date): void {
     const transition = 'mark as pending reference';
 
     this.assertNotTerminal(transition);
@@ -207,6 +221,19 @@ export class WagerTransaction {
     }
 
     this._status = WagerTransactionStatus.PendingReference;
+    this._nextReferenceRetryAt = nextRetryAt;
+  }
+
+  recordReferenceRetry(nextRetryAt: Date): void {
+    if (this._status !== WagerTransactionStatus.PendingReference) {
+      throw new InvalidTransactionStateError(
+        this._status,
+        'record a reference retry',
+      );
+    }
+
+    this._referenceRetryAttempts++;
+    this._nextReferenceRetryAt = nextRetryAt;
   }
 
   markProcessed(
@@ -222,6 +249,7 @@ export class WagerTransaction {
     this._status = WagerTransactionStatus.Processed;
     this._referenceTransactionId = referenceTransactionId;
     this._processedAt = processedAt;
+    this._nextReferenceRetryAt = undefined;
   }
 
   reject(code: FailureCode): void {
@@ -229,6 +257,7 @@ export class WagerTransaction {
 
     this._status = WagerTransactionStatus.Rejected;
     this._failureCode = code;
+    this._nextReferenceRetryAt = undefined;
   }
 
   fail(code: FailureCode): void {
@@ -236,6 +265,7 @@ export class WagerTransaction {
 
     this._status = WagerTransactionStatus.Failed;
     this._failureCode = code;
+    this._nextReferenceRetryAt = undefined;
   }
 
   private static kindRequiresReference(kind: WagerTransactionKind): boolean {

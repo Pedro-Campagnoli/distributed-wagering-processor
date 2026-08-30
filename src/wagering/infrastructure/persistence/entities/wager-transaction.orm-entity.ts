@@ -90,6 +90,18 @@ export class WagerTransactionOrmEntity {
   observedBalance!: string | null;
 
   @Property({
+    fieldName: 'reference_retry_attempts',
+    default: 0,
+  })
+  referenceRetryAttempts: number = 0;
+
+  @Property({
+    fieldName: 'next_reference_retry_at',
+    nullable: true,
+  })
+  nextReferenceRetryAt!: Date | null;
+
+  @Property({
     fieldName: 'created_at',
   })
   createdAt!: Date;
