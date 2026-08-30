@@ -3,6 +3,7 @@ import { defineConfig } from '@mikro-orm/postgresql';
 import { WalletOrmEntity } from './wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
 import { WagerTransactionOrmEntity } from './wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from './wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
+import { ReflectMetadataProvider } from '@mikro-orm/decorators/legacy';
 
 export default defineConfig({
   host: process.env.POSTGRES_HOST ?? 'localhost',
@@ -16,6 +17,8 @@ export default defineConfig({
     WagerTransactionOrmEntity,
     WalletLedgerEntryOrmEntity,
   ],
+
+  metadataProvider: ReflectMetadataProvider,
 
   discovery: {
     warnWhenNoEntities: false,

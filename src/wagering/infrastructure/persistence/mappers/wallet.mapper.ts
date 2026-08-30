@@ -24,7 +24,7 @@ export class WalletMapper {
     entity.id = wallet.id;
     entity.playerId = wallet.playerId;
     entity.currency = wallet.currency;
-    entity.balance = wallet.balance.toString();
+    entity.balance = wallet.balance.toJSON().amount;
     entity.version = wallet.version;
     entity.createdAt = wallet.createdAt;
     entity.updatedAt = wallet.updatedAt;
@@ -35,7 +35,7 @@ export class WalletMapper {
   static updateOrm(wallet: Wallet, entity: WalletOrmEntity): void {
     entity.playerId = wallet.playerId;
     entity.currency = wallet.currency;
-    entity.balance = wallet.balance.toString();
+    entity.balance = wallet.balance.toJSON().amount;
     entity.version = wallet.version;
     entity.updatedAt = wallet.updatedAt;
   }

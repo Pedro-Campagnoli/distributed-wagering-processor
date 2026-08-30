@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import type { EntityManager } from '@mikro-orm/postgresql';
+
 import { Money } from '../../domain/money.js';
 import {
   WagerTransaction,
@@ -11,9 +13,11 @@ import {
   WalletNotFoundError,
   WalletPlayerMismatchError,
 } from '@/wagering/domain/errors.js';
-import type { WalletRepository } from '../ports/wallet.repository.js';
 import { Wallet } from '@/wagering/domain/wallet.js';
-import { WalletLedgerEntry } from '@/wagering/domain/wallet-ledger-entry.js';
+import { WalletLedgerEntry } from '../../domain/wallet-ledger-entry.js';
+import { MikroOrmWagerTransactionRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wager-transaction.repository.js';
+import { MikroOrmWalletLedgerEntryRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet-ledger-entry.repository.js';
+import { MikroOrmWalletRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
 
 export interface ProcessWagerTransactionInput {
   providerId: string;
@@ -39,7 +43,7 @@ type IdGenerator = () => string;
 
 export class ProcessWagerTransactionUseCase {
   constructor(
-    private readonly walletRepository: WalletRepository,
+    private readonly entityManager: EntityManager,
     private readonly idGenerator: IdGenerator = randomUUID,
   ) {}
 
@@ -50,31 +54,56 @@ export class ProcessWagerTransactionUseCase {
       throw new ExternalOpeningTransactionError();
     }
 
-    const transaction = WagerTransaction.create({
-      id: this.idGenerator(),
-      providerId: input.providerId,
-      externalTransactionId: input.externalTransactionId,
-      idempotencyKey: input.idempotencyKey,
-      payloadHash: input.payloadHash,
-      walletId: input.walletId,
-      playerId: input.playerId,
-      roundId: input.roundId,
-      gameId: input.gameId,
-      kind: input.kind,
-      money: input.money,
-      referenceExternalTransactionId: input.referenceExternalTransactionId,
+    return this.entityManager.transactional(async (tx) => {
+      const walletRepository = new MikroOrmWalletRepository(tx);
+      const wagerTransactionRepository = new MikroOrmWagerTransactionRepository(
+        tx,
+      );
+      const walletLedgerEntryRepository =
+        new MikroOrmWalletLedgerEntryRepository(tx);
+
+      const transaction = WagerTransaction.create({
+        id: this.idGenerator(),
+        providerId: input.providerId,
+        externalTransactionId: input.externalTransactionId,
+        idempotencyKey: input.idempotencyKey,
+        payloadHash: input.payloadHash,
+        walletId: input.walletId,
+        playerId: input.playerId,
+        roundId: input.roundId,
+        gameId: input.gameId,
+        kind: input.kind,
+        money: input.money,
+        referenceExternalTransactionId: input.referenceExternalTransactionId,
+      });
+
+      const wallet = await walletRepository.findById(input.walletId);
+
+      if (!wallet) {
+        throw new WalletNotFoundError(input.walletId);
+      }
+
+      if (wallet.playerId !== input.playerId) {
+        throw new WalletPlayerMismatchError();
+      }
+
+      const result = this.processTransaction(wallet, transaction);
+
+      await wagerTransactionRepository.insert(result.transaction);
+
+      if (result.ledgerEntry) {
+        await walletRepository.update(result.wallet);
+        await walletLedgerEntryRepository.insert(result.ledgerEntry);
+      }
+
+      return result;
     });
+  }
 
-    const wallet = await this.walletRepository.findById(input.walletId);
-
-    if (!wallet) {
-      throw new WalletNotFoundError(input.walletId);
-    }
-
-    if (wallet.playerId !== input.playerId) {
-      throw new WalletPlayerMismatchError();
-    }
-
+  private processTransaction(
+    wallet: Wallet,
+    transaction: WagerTransaction,
+  ): ProcessWagerTransactionOutput {
     switch (transaction.kind) {
       case WagerTransactionKind.Bet:
         return this.processBet(wallet, transaction);

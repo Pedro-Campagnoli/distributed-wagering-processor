@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { EntityManager } from '@mikro-orm/postgresql';
 
 import {
   ExternalOpeningTransactionError,
@@ -15,10 +16,10 @@ import {
   WagerTransactionStatus,
 } from '../../domain/wager-transaction.js';
 
-import type { WalletRepository } from '../ports/wallet.repository.js';
-
 import { ProcessWagerTransactionUseCase } from './process-wager-transaction.use-case.js';
 import { LedgerDirection } from '@/wagering/domain/wallet-ledger-entry.js';
+import { WalletOrmEntity } from '../../infrastructure/persistence/entities/wallet.orm-entity.js';
+import { WalletMapper } from '../../infrastructure/persistence/mappers/wallet.mapper.js';
 
 const createWallet = (balance: string = '100.00') =>
   Wallet.open({
@@ -30,13 +31,20 @@ const createWallet = (balance: string = '100.00') =>
     }),
   });
 
-const createWalletRepository = (wallet: Wallet | undefined): WalletRepository =>
-  ({
-    findById: async () => wallet,
-    update: async () => undefined,
-    findByPlayerAndCurrency: async () => undefined,
-    insert: async () => undefined,
-  }) as WalletRepository;
+const createEntityManager = (wallet: Wallet | undefined): EntityManager => {
+  const walletEntity = wallet ? WalletMapper.toOrm(wallet) : undefined;
+  const tx = {
+    findOne: async (entity: unknown) =>
+      entity === WalletOrmEntity ? walletEntity : undefined,
+    persist: () => tx,
+    flush: async () => undefined,
+  } as unknown as EntityManager;
+
+  return {
+    transactional: async (callback: (entityManager: EntityManager) => unknown) =>
+      callback(tx),
+  } as unknown as EntityManager;
+};
 
 const createInput = (kind: WagerTransactionKind, amount: string = '25.00') => ({
   providerId: 'provider-a',
@@ -59,7 +67,7 @@ describe('ProcessWagerTransactionUseCase', () => {
     const wallet = createWallet();
 
     const useCase = new ProcessWagerTransactionUseCase(
-      createWalletRepository(wallet),
+      createEntityManager(wallet),
       () => 'transaction-id',
     );
 
@@ -73,7 +81,7 @@ describe('ProcessWagerTransactionUseCase', () => {
       const wallet = createWallet('100.00');
 
       const useCase = new ProcessWagerTransactionUseCase(
-        createWalletRepository(wallet),
+        createEntityManager(wallet),
         () => 'transaction-id',
       );
 
@@ -92,7 +100,7 @@ describe('ProcessWagerTransactionUseCase', () => {
       const wallet = createWallet('100.00');
 
       const useCase = new ProcessWagerTransactionUseCase(
-        createWalletRepository(wallet),
+        createEntityManager(wallet),
         () => 'transaction-id',
       );
 
@@ -113,7 +121,7 @@ describe('ProcessWagerTransactionUseCase', () => {
       const wallet = createWallet('100.00');
 
       const useCase = new ProcessWagerTransactionUseCase(
-        createWalletRepository(wallet),
+        createEntityManager(wallet),
         () => 'transaction-id',
       );
 
@@ -134,7 +142,7 @@ describe('ProcessWagerTransactionUseCase', () => {
       const wallet = createWallet('100.00');
 
       const useCase = new ProcessWagerTransactionUseCase(
-        createWalletRepository(wallet),
+        createEntityManager(wallet),
         () => 'transaction-id',
       );
 
@@ -161,7 +169,7 @@ describe('ProcessWagerTransactionUseCase', () => {
       const wallet = createWallet('0.00');
 
       const useCase = new ProcessWagerTransactionUseCase(
-        createWalletRepository(wallet),
+        createEntityManager(wallet),
         () => 'transaction-id',
       );
 
@@ -182,7 +190,7 @@ describe('ProcessWagerTransactionUseCase', () => {
       const wallet = createWallet('100.00');
 
       const useCase = new ProcessWagerTransactionUseCase(
-        createWalletRepository(wallet),
+        createEntityManager(wallet),
         () => 'transaction-id',
       );
 
@@ -202,7 +210,7 @@ describe('ProcessWagerTransactionUseCase', () => {
   describe('Wallet validation', () => {
     test('throws when wallet does not exist', async () => {
       const useCase = new ProcessWagerTransactionUseCase(
-        createWalletRepository(undefined),
+        createEntityManager(undefined),
         () => 'transaction-id',
       );
 
@@ -215,7 +223,7 @@ describe('ProcessWagerTransactionUseCase', () => {
       const wallet = createWallet();
 
       const useCase = new ProcessWagerTransactionUseCase(
-        createWalletRepository(wallet),
+        createEntityManager(wallet),
         () => 'transaction-id',
       );
 
