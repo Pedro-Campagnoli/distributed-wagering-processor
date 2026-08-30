@@ -189,12 +189,46 @@ Ambas usam content-based deduplication. O producer envia o contrato de
 `ProcessWagerTransactionInput` como JSON e usa `walletId` como `MessageGroupId`,
 preservando a ordem das mensagens da mesma wallet.
 
-O consumer recebe uma mensagem por vez, converte o valor recebido para `Money` e
-chama uma nova instância de `ProcessWagerTransactionUseCase` com
-`EntityManager.fork()`. Ele não contém regras de saldo, reversão ou idempotência.
-`DeleteMessage` é enviado somente depois que o use case termina com sucesso. Se o
-parse ou o processamento lançar erro, a mensagem permanece sem ACK e volta a ficar
-visível para nova tentativa; após o limite do redrive, o SQS a move para a DLQ.
+O consumer recebe uma mensagem por vez e delega para
+`ProcessInboxWagerMessageUseCase`. Ele não contém regras de saldo, reversão ou
+idempotência.
+
+### Inbox e atomicidade
+
+`inbox_messages` usa a chave primária composta `consumer_name + message_id`. O
+registro também preserva SHA-256 do payload, horário de recebimento e horário de
+processamento.
+
+Para uma nova entrega, o processamento é:
+
+```text
+BEGIN
+  consulta Inbox por consumerName + messageId
+  insere Inbox ainda não processada
+  executa ProcessWagerTransactionUseCase
+  marca Inbox como processada
+COMMIT
+
+DeleteMessage no SQS
+```
+
+O processamento financeiro é executado pelo mesmo `EntityManager` da transação
+raiz. O `transactional()` interno do use case financeiro cria apenas um savepoint;
+o commit definitivo continua pertencendo ao bloco externo da Inbox. Assim, uma
+falha na Inbox desfaz wallet, WagerTransaction e ledger, e uma falha financeira
+também desfaz a Inbox.
+
+`DeleteMessage` é enviado somente depois que o callback transacional retorna e o
+commit termina. Se o ACK falhar nesse intervalo, a próxima entrega encontra a Inbox
+com `processed_at`, não chama novamente o fluxo financeiro e apenas confirma a
+mensagem.
+
+Rejeições de negócio representadas por `WagerTransaction REJECTED` são resultados
+terminais normais: Inbox e resultado são persistidos e a mensagem recebe ACK.
+Exceções de processamento ou infraestrutura provocam rollback e não recebem ACK.
+O retry depende apenas do visibility timeout e do redrive do SQS; não existe loop de
+retry manual na aplicação. Após três recebimentos sem sucesso, a mensagem vai para
+a DLQ.
 
 Endpoint, região, credenciais locais e URLs das filas vêm de variáveis de ambiente.
 As credenciais `test/test` são fictícias e o endpoint aponta para o LocalStack; não
@@ -234,7 +268,9 @@ Implementado e verificado em PostgreSQL e LocalStack reais:
 - unicidade de reversões efetivamente processadas;
 - retry concorrente de referências pendentes;
 - reconstrução do saldo pelo ledger nas fixtures financeiras;
-- criação das filas FIFO, redrive, envio, consumo e ACK após uma BET processada.
+- criação das filas FIFO, redrive, envio e consumo;
+- Inbox atômica com o efeito financeiro e redelivery após falha de ACK;
+- rejeição terminal com ACK e falhas repetidas encaminhadas à DLQ.
 
 Limitações conhecidas do checkpoint atual:
 
@@ -243,7 +279,7 @@ Limitações conhecidas do checkpoint atual:
   instâncias depende do lock e da revalidação transacional;
 - a política de retry é fixa em código, sem configuração operacional ou jitter;
 - o SQS está integrado apenas ao LocalStack; não há configuração de deploy AWS;
-- não há Inbox ou Outbox, extensão de visibility timeout ou processamento da DLQ;
+- não há Outbox, extensão dinâmica de visibility timeout ou processamento da DLQ;
 - o consumer atual processa uma mensagem por polling e não possui observabilidade avançada;
 - não há teste distribuído entre processos/hosts: a concorrência atual usa conexões
   PostgreSQL e `EntityManager.fork()` independentes no mesmo processo de teste.

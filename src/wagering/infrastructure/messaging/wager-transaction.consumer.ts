@@ -7,14 +7,11 @@ import {
 } from '@aws-sdk/client-sqs';
 import type { EntityManager } from '@mikro-orm/postgresql';
 
-import {
-  ProcessWagerTransactionUseCase,
-  type ProcessWagerTransactionOutput,
-} from '../../application/use-cases/process-wager-transaction.use-case.js';
-import { Money } from '../../domain/money.js';
-import type { WagerTransactionMessage } from './wager-transaction.producer.js';
+import { ProcessInboxWagerMessageUseCase } from '../../application/use-cases/process-inbox-wager-message.use-case.js';
+import type { ProcessWagerTransactionOutput } from '../../application/use-cases/process-wager-transaction.use-case.js';
 
 const POLL_INTERVAL_MS = 1_000;
+export const WAGER_TRANSACTION_CONSUMER_NAME = 'wager-transactions-consumer';
 
 export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WagerTransactionConsumer.name);
@@ -25,6 +22,7 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
     private readonly entityManager: EntityManager,
     private readonly sqsClient: SQSClient,
     private readonly queueUrl: string,
+    private readonly visibilityTimeoutSeconds = 30,
   ) {}
 
   onModuleInit(): void {
@@ -44,21 +42,21 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
         QueueUrl: this.queueUrl,
         MaxNumberOfMessages: 1,
         WaitTimeSeconds: 1,
-        VisibilityTimeout: 30,
+        VisibilityTimeout: this.visibilityTimeoutSeconds,
       }),
     );
     const message = response.Messages?.[0];
 
-    if (!message?.Body || !message.ReceiptHandle) {
+    if (!message?.MessageId || !message.Body || !message.ReceiptHandle) {
       return;
     }
 
-    const payload = JSON.parse(message.Body) as WagerTransactionMessage;
-    const result = await new ProcessWagerTransactionUseCase(
-      this.entityManager.fork(),
+    const processing = await new ProcessInboxWagerMessageUseCase(
+      this.entityManager,
     ).execute({
-      ...payload,
-      money: Money.from(payload.money),
+      consumerName: WAGER_TRANSACTION_CONSUMER_NAME,
+      messageId: message.MessageId,
+      body: message.Body,
     });
 
     await this.sqsClient.send(
@@ -68,7 +66,7 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
       }),
     );
 
-    return result;
+    return processing.result;
   }
 
   private async tick(): Promise<void> {

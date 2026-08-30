@@ -5,8 +5,8 @@ MikroORM, PostgreSQL e Bun.
 
 O checkpoint atual cobre abertura de wallet, processamento financeiro atômico,
 concorrência por wallet, idempotência, `REFUND`, `ROLLBACK` e reprocessamento de
-referências pendentes, além de producer/consumer SQS local. A descrição das decisões está em
-[ARCHITECTURE.md](./ARCHITECTURE.md).
+referências pendentes, além de producer/consumer SQS local com Inbox persistente.
+A descrição das decisões está em [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Requisitos
 
@@ -53,17 +53,18 @@ Implementado:
 - processamento de `BET`, `WIN`, `LOSS`, `REFUND` e `ROLLBACK`;
 - `PENDING_REFERENCE` e worker local com retry exponencial;
 - filas FIFO locais `wager-transactions.fifo` e `wager-transactions-dlq.fifo`;
-- producer e consumer com AWS SDK, redrive para DLQ e ACK após o use case;
+- producer e consumer com AWS SDK, Inbox, redelivery seguro e redrive para DLQ;
 - testes unitários, HTTP, integração, migrations e concorrência em PostgreSQL e LocalStack.
 
 Ainda pendente:
 
 - endpoint HTTP de ingestão de wager transactions;
-- Inbox e Outbox;
+- Outbox;
 - processamento da DLQ e integração com uma conta AWS real;
 - observabilidade e operação distribuída da mensageria.
 
-As tabelas de Inbox/Outbox presentes no schema ainda não participam do fluxo SQS.
+A Inbox participa do fluxo SQS. A tabela de Outbox presente no schema ainda não é
+utilizada.
 
 ## Documentação
 
