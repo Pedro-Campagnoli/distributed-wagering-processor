@@ -1,7 +1,10 @@
 import type { EntityManager } from '@mikro-orm/postgresql';
 
 import type { WagerTransactionRepository } from '../../../application/ports/wager-transaction.repository.js';
-import type { WagerTransaction } from '../../../domain/wager-transaction.js';
+import type {
+  WagerTransaction,
+  WagerTransactionKind,
+} from '../../../domain/wager-transaction.js';
 import { WagerTransactionMapper } from '../mappers/wager-transaction.mapper.js';
 import { WagerTransactionOrmEntity } from '../entities/wager-transaction.orm-entity.js';
 
@@ -36,6 +39,24 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
     const entity = await this.entityManager.findOne(WagerTransactionOrmEntity, {
       providerId,
       externalTransactionId,
+    });
+
+    if (!entity) {
+      return;
+    }
+
+    return WagerTransactionMapper.toDomain(entity);
+  }
+
+  async findByProviderKindAndReferenceExternalTransactionId(
+    providerId: string,
+    kind: WagerTransactionKind,
+    referenceExternalTransactionId: string,
+  ): Promise<WagerTransaction | undefined> {
+    const entity = await this.entityManager.findOne(WagerTransactionOrmEntity, {
+      providerId,
+      kind,
+      referenceExternalTransactionId,
     });
 
     if (!entity) {

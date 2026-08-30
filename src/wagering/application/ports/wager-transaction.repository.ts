@@ -1,4 +1,7 @@
-import { WagerTransaction } from '@/wagering/domain/wager-transaction.js';
+import {
+  WagerTransaction,
+  WagerTransactionKind,
+} from '@/wagering/domain/wager-transaction.js';
 
 export interface WagerTransactionRepository {
   insert(transaction: WagerTransaction): Promise<void>;
@@ -8,6 +11,12 @@ export interface WagerTransactionRepository {
   findByProviderAndExternalTransactionId(
     providerId: string,
     externalTransactionId: string,
+  ): Promise<WagerTransaction | undefined>;
+
+  findByProviderKindAndReferenceExternalTransactionId(
+    providerId: string,
+    kind: WagerTransactionKind,
+    referenceExternalTransactionId: string,
   ): Promise<WagerTransaction | undefined>;
 
   findByIdempotencyKey(
