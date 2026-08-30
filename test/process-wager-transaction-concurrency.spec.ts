@@ -40,7 +40,6 @@ function createInput(externalTransactionId: string) {
     providerId: 'provider-concurrency',
     externalTransactionId,
     idempotencyKey: `provider-concurrency:${externalTransactionId}`,
-    payloadHash: `hash:${externalTransactionId}`,
     walletId: WALLET_ID,
     playerId: PLAYER_ID,
     roundId: 'round-concurrency',

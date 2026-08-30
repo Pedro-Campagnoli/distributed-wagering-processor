@@ -53,7 +53,6 @@ function createInput(
     providerId: PROVIDER_ID,
     externalTransactionId,
     idempotencyKey: `${PROVIDER_ID}:${externalTransactionId}`,
-    payloadHash: `hash:${externalTransactionId}`,
     walletId: WALLET_ID,
     playerId: PLAYER_ID,
     roundId: 'round-outbox',
@@ -405,5 +404,54 @@ describe('Transactional Outbox with PostgreSQL and LocalStack', () => {
     expect(messages).toHaveLength(1);
     failingClient.destroy();
     await expectFinancialInvariant();
+  });
+
+  it('waits for an in-flight publication during graceful shutdown', async () => {
+    await process(createInput(WagerTransactionKind.Loss));
+    const delayedClient = createSqsClient();
+    let releaseSend!: () => void;
+    let signalSendStarted!: () => void;
+    const sendReleased = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const sendStarted = new Promise<void>((resolve) => {
+      signalSendStarted = resolve;
+    });
+
+    delayedClient.middlewareStack.add(
+      (next, context) => async (args) => {
+        if (context.commandName === 'SendMessageCommand') {
+          signalSendStarted();
+          await sendReleased;
+        }
+
+        return next(args);
+      },
+      { step: 'initialize', name: 'delayOutboxSendDuringShutdown' },
+    );
+
+    const publisher = new OutboxPublisherWorker(
+      orm.em,
+      delayedClient,
+      getWagerEventsQueueUrl(),
+      1,
+    );
+    const publishing = publisher.runOnce();
+    await sendStarted;
+    let shutdownCompleted = false;
+    const shutdown = publisher.onModuleDestroy().then(() => {
+      shutdownCompleted = true;
+    });
+
+    await Bun.sleep(10);
+    expect(shutdownCompleted).toBe(false);
+
+    releaseSend();
+    await Promise.all([publishing, shutdown]);
+    delayedClient.destroy();
+
+    const persisted = (await orm.em.fork().find(OutboxMessageOrmEntity, {}))[0];
+    expect(shutdownCompleted).toBe(true);
+    expect(persisted?.publishedAt).toBeInstanceOf(Date);
   });
 });

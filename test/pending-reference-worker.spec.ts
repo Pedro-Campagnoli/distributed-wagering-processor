@@ -47,7 +47,6 @@ function createInput(
     providerId: PROVIDER_ID,
     externalTransactionId,
     idempotencyKey: `${PROVIDER_ID}:${externalTransactionId}`,
-    payloadHash: `hash:${externalTransactionId}`,
     walletId: WALLET_ID,
     playerId: PLAYER_ID,
     roundId: 'round-pending-worker',
@@ -212,6 +211,59 @@ describe('PendingReferenceWorker', () => {
     );
     expect(state.wallet?.balance).toBe('100.00');
     expect(state.ledgerEntries).toHaveLength(1);
+  });
+
+  it('waits for an in-flight retry during graceful shutdown', async () => {
+    await execute(
+      createInput(
+        WagerTransactionKind.Refund,
+        'refund-shutdown',
+        'missing-shutdown-bet',
+      ),
+    );
+    const originalReprocessPending =
+      ProcessWagerTransactionUseCase.prototype.reprocessPending;
+    let releaseRetry!: () => void;
+    let signalRetryStarted!: () => void;
+    const retryReleased = new Promise<void>((resolve) => {
+      releaseRetry = resolve;
+    });
+    const retryStarted = new Promise<void>((resolve) => {
+      signalRetryStarted = resolve;
+    });
+
+    ProcessWagerTransactionUseCase.prototype.reprocessPending = async function (
+      transactionId,
+      walletId,
+      now,
+    ) {
+      signalRetryStarted();
+      await retryReleased;
+      return originalReprocessPending.call(this, transactionId, walletId, now);
+    };
+
+    const shuttingDownWorker = new PendingReferenceWorker(orm.em);
+
+    try {
+      const retrying = shuttingDownWorker.runOnce(
+        new Date(Date.now() + 60_000),
+      );
+      await retryStarted;
+      let shutdownCompleted = false;
+      const shutdown = shuttingDownWorker.onModuleDestroy().then(() => {
+        shutdownCompleted = true;
+      });
+
+      await Bun.sleep(10);
+      expect(shutdownCompleted).toBe(false);
+
+      releaseRetry();
+      await Promise.all([retrying, shutdown]);
+      expect(shutdownCompleted).toBe(true);
+    } finally {
+      ProcessWagerTransactionUseCase.prototype.reprocessPending =
+        originalReprocessPending;
+    }
   });
 
   it('does not duplicate balance or ledger on repeated worker executions', async () => {

@@ -5,6 +5,7 @@ import { GlobalExceptionFilter } from './wagering/presentation/http/filters/glob
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.enableShutdownHooks();
 
   app.useGlobalPipes(
     new ValidationPipe({

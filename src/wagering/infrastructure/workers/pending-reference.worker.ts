@@ -12,6 +12,8 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PendingReferenceWorker.name);
   private timer?: ReturnType<typeof setInterval>;
   private running = false;
+  private stopping = false;
+  private inFlight?: Promise<void>;
 
   constructor(private readonly entityManager: EntityManager) {}
 
@@ -20,13 +22,38 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
     this.timer.unref();
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
+
     if (this.timer) {
       clearInterval(this.timer);
     }
+
+    await this.inFlight?.catch(() => undefined);
   }
 
   async runOnce(now: Date = new Date()): Promise<void> {
+    if (this.stopping) {
+      return;
+    }
+
+    if (this.inFlight) {
+      return this.inFlight;
+    }
+
+    const execution = this.reprocessDue(now);
+    this.inFlight = execution;
+
+    try {
+      await execution;
+    } finally {
+      if (this.inFlight === execution) {
+        this.inFlight = undefined;
+      }
+    }
+  }
+
+  private async reprocessDue(now: Date): Promise<void> {
     const entityManager = this.entityManager.fork();
     const repository = new MikroOrmWagerTransactionRepository(entityManager);
     const transactions = await repository.findPendingReferencesDue(
@@ -44,7 +71,7 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async tick(): Promise<void> {
-    if (this.running) {
+    if (this.running || this.stopping) {
       return;
     }
 

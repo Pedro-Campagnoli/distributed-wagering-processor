@@ -51,11 +51,13 @@ Implementado:
 - abertura de wallet pelo endpoint `POST /wallets`;
 - transação PostgreSQL única para cada fluxo financeiro;
 - lock pessimista de escrita por wallet;
-- idempotência persistente e replay com `observedBalance`;
+- idempotência persistente com SHA-256 canônico calculado internamente e replay
+  com `observedBalance`;
 - processamento de `BET`, `WIN`, `LOSS`, `REFUND` e `ROLLBACK`;
 - `PENDING_REFERENCE` e worker local com retry exponencial;
 - filas FIFO locais `wager-transactions.fifo` e `wager-transactions-dlq.fifo`;
-- producer e consumer com AWS SDK, Inbox, redelivery seguro e redrive para DLQ;
+- producer e consumer com envelope SQS obrigatório, Inbox por `messageId` lógico,
+  redelivery seguro e redrive para DLQ;
 - Transactional Outbox e publisher para a fila FIFO `wager-events.fifo`;
 - eventos `WagerTransactionProcessed`, `WagerTransactionRejected`,
   `WalletBalanceChanged` e `WagerTransactionPendingReference`;
@@ -68,7 +70,8 @@ Ainda pendente:
 - observabilidade e operação distribuída da mensageria.
 
 A Inbox e a Outbox participam da mesma transação raiz do fluxo SQS. A publicação
-da Outbox acontece somente depois do commit e segue entrega at-least-once.
+da Outbox acontece somente depois do commit e segue entrega at-least-once. Os
+shutdown hooks aguardam o processamento em voo antes de encerrar os workers.
 
 ## Documentação
 

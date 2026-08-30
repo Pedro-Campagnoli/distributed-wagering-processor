@@ -107,6 +107,14 @@ Antes do processamento, o use case procura a `idempotencyKey` no PostgreSQL:
 - mesma chave e mesmo `payloadHash`: retorna a transação existente sem novo efeito;
 - mesma chave e hash diferente: lança `IdempotencyConflictError`.
 
+O `payloadHash` não faz parte do contrato de entrada e nunca é aceito como dado
+confiável do chamador. O próprio use case calcula SHA-256 sobre JSON canônico
+(chaves ordenadas) dos campos de negócio: provider, transação externa, wallet,
+player, round, game, kind, money e eventual referência. Metadados de transporte e
+a própria `idempotencyKey` não entram no hash. O cálculo fica no use case reutilizado
+pelo SQS e será automaticamente o mesmo no endpoint HTTP de wagering, que ainda
+está pendente.
+
 Há uma segunda leitura após adquirir o lock da wallet. Ela fecha a corrida entre
 requisições idênticas que passaram juntas pela primeira leitura. As constraints
 únicas de `idempotency_key` e `provider_id + external_transaction_id` permanecem
@@ -186,9 +194,12 @@ O Compose executa LocalStack com somente o serviço SQS. O init hook
 - `wager-events.fifo`, fila FIFO de eventos de integração;
 - redrive da principal para a DLQ após 3 recebimentos sem ACK.
 
-As três filas usam content-based deduplication. O producer envia o contrato de
-`ProcessWagerTransactionInput` como JSON e usa `walletId` como `MessageGroupId`,
-preservando a ordem das mensagens da mesma wallet.
+As três filas usam content-based deduplication. O producer envia o envelope
+obrigatório `{ messageId, type, occurredAt, data }`, com
+`type = WagerTransactionRequested`, e usa `walletId` como `MessageGroupId`,
+preservando a ordem das mensagens da mesma wallet. `messageId` é gerado pela
+aplicação e também enviado como `MessageDeduplicationId`; o id atribuído pelo SQS
+não participa da idempotência da aplicação.
 
 O consumer recebe uma mensagem por vez e delega para
 `ProcessInboxWagerMessageUseCase`. Ele não contém regras de saldo, reversão ou
@@ -196,9 +207,11 @@ idempotência.
 
 ### Inbox e atomicidade
 
-`inbox_messages` usa a chave primária composta `consumer_name + message_id`. O
-registro também preserva SHA-256 do payload, horário de recebimento e horário de
-processamento.
+`inbox_messages` usa a chave primária composta `consumer_name + message_id`, onde
+`message_id` é o identificador lógico do envelope. O registro também preserva
+SHA-256 do envelope canônico, horário de recebimento e horário de processamento.
+Uma redelivery com o mesmo hash é replay seguro; reutilizar a chave com payload
+divergente gera `DuplicateInboxMessageConflictError` e nunca repete o efeito.
 
 Para uma nova entrega, o processamento é:
 
@@ -226,10 +239,16 @@ mensagem.
 
 Rejeições de negócio representadas por `WagerTransaction REJECTED` são resultados
 terminais normais: Inbox e resultado são persistidos e a mensagem recebe ACK.
-Exceções de processamento ou infraestrutura provocam rollback e não recebem ACK.
-O retry depende apenas do visibility timeout e do redrive do SQS; não existe loop de
-retry manual na aplicação. Após três recebimentos sem sucesso, a mensagem vai para
-a DLQ.
+Conflitos de negócio terminais também recebem ACK. Falhas de infraestrutura e
+payloads permanentemente inválidos não recebem ACK; estes últimos chegam à DLQ
+pelo redrive. O retry depende apenas do visibility timeout e do redrive do SQS; não
+existe loop de retry manual na aplicação. Após três recebimentos sem sucesso, a
+mensagem vai para a DLQ.
+
+O bootstrap habilita os shutdown hooks do NestJS. Em `SIGTERM`, consumer, worker de
+referências e publisher param de iniciar ciclos e aguardam o ciclo em voo. Se o
+consumer falhar antes do ACK, a mensagem permanece disponível para redelivery
+seguro pela Inbox.
 
 Endpoint, região, credenciais locais e URLs das filas vêm de variáveis de ambiente.
 As credenciais `test/test` são fictícias e o endpoint aponta para o LocalStack; não
@@ -321,6 +340,7 @@ Implementado e verificado em PostgreSQL e LocalStack reais:
 - reconstrução do saldo pelo ledger nas fixtures financeiras;
 - criação das filas FIFO, redrive, envio e consumo;
 - Inbox atômica com o efeito financeiro e redelivery após falha de ACK;
+- envelope SQS lógico, hash canônico e conflito de payload na Inbox;
 - Outbox atômica, quatro eventos versionados, retry exponencial e publishers
   concorrentes com `SKIP LOCKED`;
 - rejeição terminal com ACK e falhas repetidas encaminhadas à DLQ.

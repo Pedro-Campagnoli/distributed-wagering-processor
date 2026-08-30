@@ -19,6 +19,7 @@ import {
 
 import mikroOrmConfig from '@/mikro-orm.config.js';
 import {
+  DuplicateInboxMessageConflictError,
   ProcessInboxWagerMessageUseCase,
   type ProcessInboxWagerMessageInput,
 } from '../src/wagering/application/use-cases/process-inbox-wager-message.use-case.js';
@@ -39,6 +40,10 @@ import {
   WagerTransactionConsumer,
 } from '../src/wagering/infrastructure/messaging/wager-transaction.consumer.js';
 import { WagerTransactionProducer } from '../src/wagering/infrastructure/messaging/wager-transaction.producer.js';
+import {
+  createWagerTransactionMessage,
+  WAGER_TRANSACTION_REQUESTED,
+} from '../src/wagering/infrastructure/messaging/wager-transaction.message.js';
 import { InboxMessageOrmEntity } from '../src/wagering/infrastructure/persistence/entities/inbox-message.orm-entity.js';
 import { OutboxMessageOrmEntity } from '../src/wagering/infrastructure/persistence/entities/outbox-message.orm-entity.js';
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
@@ -65,7 +70,6 @@ function createInput(amount = '25.00'): ProcessWagerTransactionInput {
     providerId: 'provider-sqs',
     externalTransactionId,
     idempotencyKey: `provider-sqs:${externalTransactionId}`,
-    payloadHash: `hash:${externalTransactionId}`,
     walletId: WALLET_ID,
     playerId: PLAYER_ID,
     roundId: 'round-sqs',
@@ -81,11 +85,13 @@ function createInboxInput(
 ): ProcessInboxWagerMessageInput {
   return {
     consumerName: WAGER_TRANSACTION_CONSUMER_NAME,
-    messageId,
-    body: JSON.stringify({
-      ...input,
-      money: input.money.toJSON(),
-    }),
+    body: JSON.stringify(
+      createWagerTransactionMessage(
+        input,
+        messageId,
+        new Date('2026-01-01T00:00:00.000Z'),
+      ),
+    ),
   };
 }
 
@@ -264,6 +270,34 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
     expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
   });
 
+  it('publishes the required envelope without accepting a caller payload hash', async () => {
+    const input = createInput() as ProcessWagerTransactionInput & {
+      payloadHash: string;
+    };
+    input.payloadHash = 'untrusted-caller-hash';
+    const logicalMessageId = await producer.send(input);
+    const response = await receiveOne(getWagerQueueUrl(), 1);
+    const body = JSON.parse(response.Messages?.[0]?.Body ?? '{}') as {
+      messageId?: string;
+      type?: string;
+      occurredAt?: string;
+      data?: Record<string, unknown>;
+    };
+
+    expect(body.messageId).toBe(logicalMessageId);
+    expect(body.type).toBe(WAGER_TRANSACTION_REQUESTED);
+    expect(Date.parse(body.occurredAt ?? '')).not.toBeNaN();
+    expect(body.data?.externalTransactionId).toBe(input.externalTransactionId);
+    expect(body.data?.payloadHash).toBeUndefined();
+
+    await sqsClient.send(
+      new DeleteMessageCommand({
+        QueueUrl: getWagerQueueUrl(),
+        ReceiptHandle: response.Messages?.[0]?.ReceiptHandle,
+      }),
+    );
+  });
+
   it('commits a terminal business rejection and acknowledges the message', async () => {
     await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
     const messageId = await producer.send(createInput('150.00'));
@@ -286,6 +320,33 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
     expect(debitEntries).toHaveLength(0);
     expect(wagerOutboxCount(state)).toBe(1);
     expect(remainingMessages.Messages).toBeUndefined();
+    expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
+  });
+
+  it('acknowledges an idempotency conflict instead of retrying it', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    const first = createInput('25.00');
+    const conflicting = {
+      ...first,
+      money: Money.from({ amount: '30.00', currency: 'BRL' }),
+    };
+
+    await producer.send(first);
+    await consumer.runOnce();
+    await producer.send(conflicting);
+    const conflictResult = await consumer.runOnce();
+
+    const state = await persistedFinancialState();
+    const remainingMessages = await receiveOne(getWagerQueueUrl(), 1);
+    const debits = state.ledgerEntries.filter(
+      (entry) => entry.direction === LedgerDirection.Debit,
+    );
+
+    expect(conflictResult).toBeUndefined();
+    expect(remainingMessages.Messages).toBeUndefined();
+    expect(state.wallet?.balance).toBe('75.00');
+    expect(state.wagerTransactions).toHaveLength(1);
+    expect(debits).toHaveLength(1);
     expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
   });
 
@@ -322,6 +383,44 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
     expect(state.wagerTransactions).toHaveLength(0);
     expect(debitEntries).toHaveLength(0);
     expect(wagerOutboxCount(state)).toBe(0);
+    expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
+  });
+
+  it('leaves a transient infrastructure failure unacknowledged for redelivery', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    const messageId = await producer.send(createInput());
+    const originalMarkProcessed =
+      MikroOrmInboxMessageRepository.prototype.markProcessed;
+    const immediateRetryConsumer = new WagerTransactionConsumer(
+      orm.em,
+      sqsClient,
+      getWagerQueueUrl(),
+      1,
+    );
+
+    MikroOrmInboxMessageRepository.prototype.markProcessed = async () => {
+      throw new Error('Simulated transient database failure');
+    };
+
+    try {
+      await expect(immediateRetryConsumer.runOnce()).rejects.toThrow(
+        'Simulated transient database failure',
+      );
+    } finally {
+      MikroOrmInboxMessageRepository.prototype.markProcessed =
+        originalMarkProcessed;
+    }
+
+    await Bun.sleep(1_050);
+    const retryResult = await immediateRetryConsumer.runOnce();
+    const state = await persistedFinancialState();
+
+    expect(retryResult?.transaction.status).toBe(
+      WagerTransactionStatus.Processed,
+    );
+    expect(state.inboxMessages[0]?.messageId).toBe(messageId);
+    expect(state.wallet?.balance).toBe('75.00');
+    expect(state.wagerTransactions).toHaveLength(1);
     expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
   });
 
@@ -382,6 +481,108 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
       finalState.wallet,
       finalState.ledgerEntries,
     );
+  });
+
+  it('rejects a reused logical message id with a different payload', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    const messageId = `logical-conflict-${randomUUID()}`;
+    const processor = new ProcessInboxWagerMessageUseCase(orm.em);
+
+    await processor.execute(createInboxInput(messageId, createInput('25.00')));
+
+    await expect(
+      processor.execute(createInboxInput(messageId, createInput('30.00'))),
+    ).rejects.toBeInstanceOf(DuplicateInboxMessageConflictError);
+
+    const state = await persistedFinancialState();
+    const debits = state.ledgerEntries.filter(
+      (entry) => entry.direction === LedgerDirection.Debit,
+    );
+
+    expect(state.inboxMessages).toHaveLength(1);
+    expect(state.wagerTransactions).toHaveLength(1);
+    expect(debits).toHaveLength(1);
+    expect(state.wallet?.balance).toBe('75.00');
+    expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
+  });
+
+  it('treats reordered canonical JSON as the same Inbox payload', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    const processor = new ProcessInboxWagerMessageUseCase(orm.em);
+    const message = createWagerTransactionMessage(
+      createInput(),
+      `canonical-${randomUUID()}`,
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+    const first = await processor.execute({
+      consumerName: WAGER_TRANSACTION_CONSUMER_NAME,
+      body: JSON.stringify(message),
+    });
+    const replay = await processor.execute({
+      consumerName: WAGER_TRANSACTION_CONSUMER_NAME,
+      body: JSON.stringify({
+        data: message.data,
+        occurredAt: message.occurredAt,
+        type: message.type,
+        messageId: message.messageId,
+      }),
+    });
+    const state = await persistedFinancialState();
+
+    expect(first.alreadyProcessed).toBe(false);
+    expect(replay.alreadyProcessed).toBe(true);
+    expect(state.inboxMessages).toHaveLength(1);
+    expect(state.wagerTransactions).toHaveLength(1);
+    expect(state.wallet?.balance).toBe('75.00');
+  });
+
+  it('waits for the in-flight ACK during graceful shutdown', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    await producer.send(createInput());
+    const delayedClient = createSqsClient();
+    let releaseDelete!: () => void;
+    let signalDeleteStarted!: () => void;
+    const deleteReleased = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    const deleteStarted = new Promise<void>((resolve) => {
+      signalDeleteStarted = resolve;
+    });
+
+    delayedClient.middlewareStack.add(
+      (next, context) => async (args) => {
+        if (context.commandName === 'DeleteMessageCommand') {
+          signalDeleteStarted();
+          await deleteReleased;
+        }
+
+        return next(args);
+      },
+      { step: 'initialize', name: 'delayDeleteDuringShutdown' },
+    );
+
+    const shuttingDownConsumer = new WagerTransactionConsumer(
+      orm.em,
+      delayedClient,
+      getWagerQueueUrl(),
+      30,
+    );
+    const processing = shuttingDownConsumer.runOnce();
+    await deleteStarted;
+    let shutdownCompleted = false;
+    const shutdown = shuttingDownConsumer.onModuleDestroy().then(() => {
+      shutdownCompleted = true;
+    });
+
+    await Bun.sleep(10);
+    expect(shutdownCompleted).toBe(false);
+
+    releaseDelete();
+    await Promise.all([processing, shutdown]);
+    delayedClient.destroy();
+
+    expect(shutdownCompleted).toBe(true);
+    expect((await receiveOne(getWagerQueueUrl(), 1)).Messages).toBeUndefined();
   });
 
   it('lets SQS move a repeatedly failing message to the DLQ', async () => {

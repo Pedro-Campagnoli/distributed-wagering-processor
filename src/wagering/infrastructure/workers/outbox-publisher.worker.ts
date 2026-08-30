@@ -17,6 +17,8 @@ export class OutboxPublisherWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OutboxPublisherWorker.name);
   private timer?: ReturnType<typeof setInterval>;
   private running = false;
+  private stopping = false;
+  private inFlight?: Promise<OutboxPublishResult>;
 
   constructor(
     private readonly entityManager: EntityManager,
@@ -30,13 +32,38 @@ export class OutboxPublisherWorker implements OnModuleInit, OnModuleDestroy {
     this.timer.unref();
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
+
     if (this.timer) {
       clearInterval(this.timer);
     }
+
+    await this.inFlight?.catch(() => undefined);
   }
 
   async runOnce(now: Date = new Date()): Promise<OutboxPublishResult> {
+    if (this.stopping) {
+      return { published: 0, retried: 0 };
+    }
+
+    if (this.inFlight) {
+      return this.inFlight;
+    }
+
+    const execution = this.publishDue(now);
+    this.inFlight = execution;
+
+    try {
+      return await execution;
+    } finally {
+      if (this.inFlight === execution) {
+        this.inFlight = undefined;
+      }
+    }
+  }
+
+  private async publishDue(now: Date): Promise<OutboxPublishResult> {
     const result: OutboxPublishResult = { published: 0, retried: 0 };
 
     for (let index = 0; index < this.batchSize; index++) {
@@ -85,7 +112,7 @@ export class OutboxPublisherWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async tick(): Promise<void> {
-    if (this.running) {
+    if (this.running || this.stopping) {
       return;
     }
 

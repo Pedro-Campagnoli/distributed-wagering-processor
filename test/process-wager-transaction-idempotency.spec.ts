@@ -12,6 +12,7 @@ import { MikroORM } from '@mikro-orm/postgresql';
 import mikroOrmConfig from '@/mikro-orm.config.js';
 
 import { ProcessWagerTransactionUseCase } from '../src/wagering/application/use-cases/process-wager-transaction.use-case.js';
+import { calculateWagerPayloadHash } from '../src/wagering/application/services/wager-payload-hash.js';
 import { IdempotencyConflictError } from '../src/wagering/domain/errors.js';
 import { Money } from '../src/wagering/domain/money.js';
 import {
@@ -35,19 +36,18 @@ const UNUSED_LEDGER_ID = '00000000-0000-4000-8000-000000001106';
 
 let orm: MikroORM;
 
-function createInput(payloadHash = 'payload-hash') {
+function createInput(amount = '25.00') {
   return {
     providerId: 'provider-idempotency',
     externalTransactionId: 'bet-idempotency',
     idempotencyKey: 'provider-idempotency:bet-idempotency',
-    payloadHash,
     walletId: WALLET_ID,
     playerId: PLAYER_ID,
     roundId: 'round-idempotency',
     gameId: 'game-idempotency',
     kind: WagerTransactionKind.Bet,
     money: Money.from({
-      amount: '25.00',
+      amount,
       currency: 'BRL',
     }),
   };
@@ -150,6 +150,33 @@ describe('ProcessWagerTransactionUseCase idempotency', () => {
     expect(state.ledgerEntries).toHaveLength(2);
   });
 
+  it('ignores a payload hash supplied by the caller', async () => {
+    const first = createInput() as ReturnType<typeof createInput> & {
+      payloadHash: string;
+    };
+    const replay = createInput() as ReturnType<typeof createInput> & {
+      payloadHash: string;
+    };
+    first.payloadHash = 'caller-hash-one';
+    replay.payloadHash = 'caller-hash-two';
+
+    const processed = await createUseCase(TRANSACTION_ID, LEDGER_ID).execute(
+      first,
+    );
+    const repeated = await createUseCase(
+      UNUSED_TRANSACTION_ID,
+      UNUSED_LEDGER_ID,
+    ).execute(replay);
+    const state = await persistedState();
+
+    expect(processed.transaction.payloadHash).toBe(
+      calculateWagerPayloadHash(first),
+    );
+    expect(repeated.transaction.id).toBe(processed.transaction.id);
+    expect(state.transactions).toHaveLength(2);
+    expect(state.ledgerEntries).toHaveLength(2);
+  });
+
   it('returns the original observed balance after the wallet balance changes', async () => {
     await createUseCase(TRANSACTION_ID, LEDGER_ID).execute(createInput());
 
@@ -157,7 +184,6 @@ describe('ProcessWagerTransactionUseCase idempotency', () => {
       ...createInput(),
       externalTransactionId: 'win-after-bet',
       idempotencyKey: 'provider-idempotency:win-after-bet',
-      payloadHash: 'hash:win-after-bet',
       kind: WagerTransactionKind.Win,
       money: Money.from({
         amount: '10.00',
@@ -219,7 +245,7 @@ describe('ProcessWagerTransactionUseCase idempotency', () => {
       responses.every(
         (response) =>
           response.transaction.idempotencyKey === input.idempotencyKey &&
-          response.transaction.payloadHash === input.payloadHash,
+          response.transaction.payloadHash === calculateWagerPayloadHash(input),
       ),
     ).toBe(true);
     const wagerTransaction = state.transactions.find(
@@ -239,13 +265,13 @@ describe('ProcessWagerTransactionUseCase idempotency', () => {
     expect(state.wallet?.balance).toBe('75.00');
   });
 
-  it('rejects the same key with a different payload hash as a conflict', async () => {
+  it('rejects the same key with a different business payload as a conflict', async () => {
     await createUseCase(TRANSACTION_ID, LEDGER_ID).execute(createInput());
 
     const conflictingRequest = createUseCase(
       UNUSED_TRANSACTION_ID,
       UNUSED_LEDGER_ID,
-    ).execute(createInput('different-payload-hash'));
+    ).execute(createInput('30.00'));
 
     await expect(conflictingRequest).rejects.toBeInstanceOf(
       IdempotencyConflictError,

@@ -1,23 +1,7 @@
 import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 
 import type { ProcessWagerTransactionInput } from '../../application/use-cases/process-wager-transaction.use-case.js';
-
-export interface WagerTransactionMessage {
-  providerId: string;
-  externalTransactionId: string;
-  idempotencyKey: string;
-  payloadHash: string;
-  walletId: string;
-  playerId: string;
-  roundId: string;
-  gameId: string;
-  kind: ProcessWagerTransactionInput['kind'];
-  money: {
-    amount: string;
-    currency: string;
-  };
-  referenceExternalTransactionId?: string;
-}
+import { createWagerTransactionMessage } from './wager-transaction.message.js';
 
 export class WagerTransactionProducer {
   constructor(
@@ -25,20 +9,18 @@ export class WagerTransactionProducer {
     private readonly queueUrl: string,
   ) {}
 
-  async send(input: ProcessWagerTransactionInput): Promise<string | undefined> {
-    const message: WagerTransactionMessage = {
-      ...input,
-      money: input.money.toJSON(),
-    };
+  async send(input: ProcessWagerTransactionInput): Promise<string> {
+    const message = createWagerTransactionMessage(input);
 
-    const response = await this.sqsClient.send(
+    await this.sqsClient.send(
       new SendMessageCommand({
         QueueUrl: this.queueUrl,
         MessageBody: JSON.stringify(message),
         MessageGroupId: input.walletId,
+        MessageDeduplicationId: message.messageId,
       }),
     );
 
-    return response.MessageId;
+    return message.messageId;
   }
 }

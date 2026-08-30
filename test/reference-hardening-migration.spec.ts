@@ -22,6 +22,9 @@ const MIGRATION_NAME = 'Migration20260830000200_reference_hardening';
 const WALLET_ID = '00000000-0000-4000-8000-000000001601';
 const PLAYER_ID = '00000000-0000-4000-8000-000000001602';
 const TRANSACTION_ID = '00000000-0000-4000-8000-000000001603';
+const BET_ID = '00000000-0000-4000-8000-000000001604';
+const REJECTED_REFUND_ID = '00000000-0000-4000-8000-000000001605';
+const PROCESSED_REFUND_ID = '00000000-0000-4000-8000-000000001606';
 
 let orm: MikroORM;
 
@@ -112,5 +115,74 @@ describe('reference hardening migration', () => {
         await migrator.up([MIGRATION_NAME]);
       }
     }
+  });
+
+  it('can migrate down and up with a rejected reversal followed by a processed correction', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    const entityManager = orm.em.fork();
+    const now = new Date('2026-08-30T12:00:00.000Z');
+    const common = {
+      providerId: 'provider-migration',
+      walletId: WALLET_ID,
+      playerId: PLAYER_ID,
+      roundId: 'round-migration',
+      gameId: 'game-migration',
+      amount: '25.00',
+      currency: 'BRL',
+      observedBalance: '100.00',
+      referenceRetryAttempts: 0,
+      nextReferenceRetryAt: null,
+      createdAt: now,
+      processedAt: now,
+    };
+    const bet = entityManager.create(WagerTransactionOrmEntity, {
+      ...common,
+      id: BET_ID,
+      externalTransactionId: 'migration-bet',
+      idempotencyKey: 'provider-migration:migration-bet',
+      payloadHash: 'hash:migration-bet',
+      kind: WagerTransactionKind.Bet,
+      referenceExternalTransactionId: null,
+      referenceTransactionId: null,
+      status: WagerTransactionStatus.Processed,
+      failureCode: null,
+    });
+    const rejectedRefund = entityManager.create(WagerTransactionOrmEntity, {
+      ...common,
+      id: REJECTED_REFUND_ID,
+      externalTransactionId: 'migration-refund-rejected',
+      idempotencyKey: 'provider-migration:migration-refund-rejected',
+      payloadHash: 'hash:migration-refund-rejected',
+      kind: WagerTransactionKind.Refund,
+      referenceExternalTransactionId: bet.externalTransactionId,
+      referenceTransactionId: BET_ID,
+      status: WagerTransactionStatus.Rejected,
+      failureCode: 'REFERENCE_AMOUNT_MISMATCH',
+    });
+    const processedRefund = entityManager.create(WagerTransactionOrmEntity, {
+      ...common,
+      id: PROCESSED_REFUND_ID,
+      externalTransactionId: 'migration-refund-processed',
+      idempotencyKey: 'provider-migration:migration-refund-processed',
+      payloadHash: 'hash:migration-refund-processed',
+      kind: WagerTransactionKind.Refund,
+      referenceExternalTransactionId: bet.externalTransactionId,
+      referenceTransactionId: BET_ID,
+      status: WagerTransactionStatus.Processed,
+      failureCode: null,
+    });
+
+    entityManager.persist([bet, rejectedRefund, processedRefund]);
+    await entityManager.flush();
+
+    await expect(orm.migrator.down([MIGRATION_NAME])).resolves.toBeDefined();
+    await expect(orm.migrator.up([MIGRATION_NAME])).resolves.toBeDefined();
+
+    entityManager.clear();
+    const reversals = await entityManager.find(WagerTransactionOrmEntity, {
+      id: { $in: [REJECTED_REFUND_ID, PROCESSED_REFUND_ID] },
+    });
+
+    expect(reversals).toHaveLength(2);
   });
 });

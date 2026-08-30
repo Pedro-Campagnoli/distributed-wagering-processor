@@ -42,7 +42,6 @@ function createInput(
     providerId: PROVIDER_ID,
     externalTransactionId,
     idempotencyKey: `${PROVIDER_ID}:${externalTransactionId}`,
-    payloadHash: `hash:${externalTransactionId}`,
     walletId: WALLET_ID,
     playerId: PLAYER_ID,
     roundId: ROUND_ID,

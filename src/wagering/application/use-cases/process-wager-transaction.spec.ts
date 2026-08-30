@@ -50,7 +50,6 @@ const createInput = (kind: WagerTransactionKind, amount: string = '25.00') => ({
   providerId: 'provider-a',
   externalTransactionId: 'transaction-123',
   idempotencyKey: 'provider-a:transaction-123',
-  payloadHash: 'payload-hash',
   walletId: 'wallet-id',
   playerId: 'player-id',
   roundId: 'round-1',

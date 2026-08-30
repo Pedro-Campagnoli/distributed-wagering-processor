@@ -21,12 +21,12 @@ import { MikroOrmWagerTransactionRepository } from '../../infrastructure/persist
 import { MikroOrmWalletLedgerEntryRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet-ledger-entry.repository.js';
 import { MikroOrmWalletRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
 import { enqueueWagerIntegrationEvents } from '../services/enqueue-wager-integration-events.js';
+import { calculateWagerPayloadHash } from '../services/wager-payload-hash.js';
 
 export interface ProcessWagerTransactionInput {
   providerId: string;
   externalTransactionId: string;
   idempotencyKey: string;
-  payloadHash: string;
   walletId: string;
   playerId: string;
   roundId: string;
@@ -71,6 +71,8 @@ export class ProcessWagerTransactionUseCase {
       throw new ExternalOpeningTransactionError();
     }
 
+    const payloadHash = calculateWagerPayloadHash(input);
+
     return this.entityManager.transactional(async (tx) => {
       const walletRepository = new MikroOrmWalletRepository(tx);
       const wagerTransactionRepository = new MikroOrmWagerTransactionRepository(
@@ -85,7 +87,7 @@ export class ProcessWagerTransactionUseCase {
         );
 
       if (existingTransaction) {
-        if (!existingTransaction.matchesPayload(input.payloadHash)) {
+        if (!existingTransaction.matchesPayload(payloadHash)) {
           throw new IdempotencyConflictError(input.idempotencyKey);
         }
 
@@ -113,7 +115,7 @@ export class ProcessWagerTransactionUseCase {
         );
 
       if (concurrentTransaction) {
-        if (!concurrentTransaction.matchesPayload(input.payloadHash)) {
+        if (!concurrentTransaction.matchesPayload(payloadHash)) {
           throw new IdempotencyConflictError(input.idempotencyKey);
         }
 
@@ -128,7 +130,7 @@ export class ProcessWagerTransactionUseCase {
         providerId: input.providerId,
         externalTransactionId: input.externalTransactionId,
         idempotencyKey: input.idempotencyKey,
-        payloadHash: input.payloadHash,
+        payloadHash,
         walletId: input.walletId,
         playerId: input.playerId,
         roundId: input.roundId,
