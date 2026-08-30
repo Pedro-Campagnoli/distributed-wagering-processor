@@ -14,7 +14,6 @@ import {
   ExternalOpeningTransactionError,
   IdempotencyConflictError,
   InsufficientBalanceError,
-  TransactionReferenceNotFoundError,
   WalletNotFoundError,
   WalletPlayerMismatchError,
 } from '@/wagering/domain/errors.js';
@@ -142,12 +141,6 @@ export class ProcessWagerTransactionUseCase {
             transaction.referenceExternalTransactionId!,
           );
 
-        if (!reference) {
-          throw new TransactionReferenceNotFoundError(
-            transaction.referenceExternalTransactionId!,
-          );
-        }
-
         const previousReversal =
           await wagerTransactionRepository.findByProviderKindAndReferenceExternalTransactionId(
             transaction.providerId,
@@ -165,6 +158,10 @@ export class ProcessWagerTransactionUseCase {
           throw new DuplicateRollbackError(
             transaction.referenceExternalTransactionId!,
           );
+        }
+
+        if (!reference) {
+          transaction.markPendingReference();
         }
       }
 
@@ -192,6 +189,13 @@ export class ProcessWagerTransactionUseCase {
     transaction: WagerTransaction,
     reference?: WagerTransaction,
   ): ProcessedWagerTransaction {
+    if (transaction.status === WagerTransactionStatus.PendingReference) {
+      return {
+        transaction,
+        wallet,
+      };
+    }
+
     switch (transaction.kind) {
       case WagerTransactionKind.Bet:
         return this.processBet(wallet, transaction);

@@ -90,13 +90,6 @@ export class IdempotencyConflictError extends Error {
   }
 }
 
-export class TransactionReferenceNotFoundError extends Error {
-  constructor(externalTransactionId: string) {
-    super(`Transaction reference not found: ${externalTransactionId}`);
-    this.name = 'TransactionReferenceNotFoundError';
-  }
-}
-
 export class DuplicateRefundError extends Error {
   constructor(referenceExternalTransactionId: string) {
     super(`BET already refunded: ${referenceExternalTransactionId}`);
