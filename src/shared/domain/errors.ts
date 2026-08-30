@@ -61,3 +61,10 @@ export class LedgerDirectionUnavailableError extends Error {
     this.name = 'LedgerDirectionUnavailableError';
   }
 }
+
+export class ExternalOpeningTransactionError extends Error {
+  constructor() {
+    super('OPENING transactions cannot be submitted externally');
+    this.name = 'ExternalOpeningTransactionError';
+  }
+}
