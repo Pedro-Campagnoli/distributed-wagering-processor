@@ -10,10 +10,10 @@ import {
   InsufficientBalanceError,
   WalletNotFoundError,
   WalletPlayerMismatchError,
-} from '@/shared/domain/errors.js';
-import type { WalletRepository } from '../repositories/wallet.repository.js';
-import { Wallet } from '@/shared/domain/wallet.js';
-import { WalletLedgerEntry } from '@/shared/domain/wallet-ledger-entry.js';
+} from '@/wagering/domain/errors.js';
+import type { WalletRepository } from '../ports/wallet.repository.js';
+import { Wallet } from '@/wagering/domain/wallet.js';
+import { WalletLedgerEntry } from '@/wagering/domain/wallet-ledger-entry.js';
 
 export interface ProcessWagerTransactionInput {
   providerId: string;

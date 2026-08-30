@@ -9,9 +9,9 @@ import {
   WagerTransactionKind,
 } from '../../domain/wager-transaction.js';
 import { Wallet } from '../../domain/wallet.js';
-import { MikroOrmWagerTransactionRepository } from '../../infrastructure/persistence/mikro-orm-wager-transaction.repository.js';
-import { MikroOrmWalletLedgerEntryRepository } from '../../infrastructure/persistence/mikro-orm-wallet-ledger-entry.repository.js';
-import { MikroOrmWalletRepository } from '../../infrastructure/persistence/mikro-orm-wallet.repository.js';
+import { MikroOrmWagerTransactionRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wager-transaction.repository.js';
+import { MikroOrmWalletLedgerEntryRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet-ledger-entry.repository.js';
+import { MikroOrmWalletRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
 
 export interface OpenWalletInput {
   playerId: string;

@@ -15,10 +15,10 @@ import {
   WagerTransactionStatus,
 } from '../../domain/wager-transaction.js';
 
-import type { WalletRepository } from '../repositories/wallet.repository.js';
+import type { WalletRepository } from '../ports/wallet.repository.js';
 
 import { ProcessWagerTransactionUseCase } from './process-wager-transaction.use-case.js';
-import { LedgerDirection } from '@/shared/domain/wallet-ledger-entry.js';
+import { LedgerDirection } from '@/wagering/domain/wallet-ledger-entry.js';
 
 const createWallet = (balance: string = '100.00') =>
   Wallet.open({

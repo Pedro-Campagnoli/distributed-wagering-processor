@@ -12,7 +12,7 @@ import {
 import {
   InvalidCurrencyError,
   InvalidMoneyAmountError,
-} from '../../domain/errors.js';
+} from '@/wagering/domain/errors.js';
 
 interface PostgreSqlConstraintError {
   constraint?: string;

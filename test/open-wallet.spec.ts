@@ -8,21 +8,21 @@ import {
 } from 'bun:test';
 import { MikroORM } from '@mikro-orm/postgresql';
 
-import { OpenWalletUseCase } from '../src/shared/application/use-cases/open-wallet.use-case.js';
-import { Money } from '../src/shared/domain/money.js';
+import { OpenWalletUseCase } from '../src/wagering/application/use-cases/open-wallet.use-case.js';
+import { Money } from '../src/wagering/domain/money.js';
 import {
   LedgerDirection,
   WalletLedgerEntry,
-} from '../src/shared/domain/wallet-ledger-entry.js';
+} from '../src/wagering/domain/wallet-ledger-entry.js';
 import {
   WagerTransaction,
   WagerTransactionKind,
   WagerTransactionStatus,
-} from '../src/shared/domain/wager-transaction.js';
-import { Wallet } from '../src/shared/domain/wallet.js';
-import { MikroOrmWagerTransactionRepository } from '../src/shared/infrastructure/persistence/mikro-orm-wager-transaction.repository.js';
-import { MikroOrmWalletLedgerEntryRepository } from '../src/shared/infrastructure/persistence/mikro-orm-wallet-ledger-entry.repository.js';
-import { MikroOrmWalletRepository } from '../src/shared/infrastructure/persistence/mikro-orm-wallet.repository.js';
+} from '../src/wagering/domain/wager-transaction.js';
+import { Wallet } from '../src/wagering/domain/wallet.js';
+import { MikroOrmWagerTransactionRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wager-transaction.repository.js';
+import { MikroOrmWalletLedgerEntryRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet-ledger-entry.repository.js';
+import { MikroOrmWalletRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
 import mikroOrmConfig from '@/mikro-orm.config.js';
 
 const OPEN_WALLET_TESTS_ENABLED = process.env.RUN_OPEN_WALLET_TESTS === '1';

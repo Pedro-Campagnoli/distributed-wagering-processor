@@ -12,7 +12,7 @@ import {
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
-import { GlobalExceptionFilter } from '../src/shared/infrastructure/http/global-exception.filter.js';
+import { GlobalExceptionFilter } from '../src/wagering/presentation/http/filters/global-exception.filter.js';
 
 const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
 

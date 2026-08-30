@@ -1,8 +1,8 @@
 import type { EntityManager } from '@mikro-orm/postgresql';
 
-import type { WalletRepository } from '../../application/repositories/wallet.repository.js';
-import { Money } from '../../domain/money.js';
-import { Wallet } from '../../domain/wallet.js';
+import type { WalletRepository } from '../../../application/ports/wallet.repository.js';
+import { Money } from '../../../domain/money.js';
+import { Wallet } from '../../../domain/wallet.js';
 
 interface WalletRow {
   id: string;

@@ -1,7 +1,7 @@
 import type { EntityManager } from '@mikro-orm/postgresql';
 
-import type { WalletLedgerEntryRepository } from '../../application/repositories/wallet-ledger-entry.repository.js';
-import type { WalletLedgerEntry } from '../../domain/wallet-ledger-entry.js';
+import type { WalletLedgerEntryRepository } from '../../../application/ports/wallet-ledger-entry.repository.js';
+import type { WalletLedgerEntry } from '../../../domain/wallet-ledger-entry.js';
 
 export class MikroOrmWalletLedgerEntryRepository implements WalletLedgerEntryRepository {
   constructor(private readonly entityManager: EntityManager) {}

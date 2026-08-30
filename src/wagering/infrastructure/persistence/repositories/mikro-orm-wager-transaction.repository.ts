@@ -1,12 +1,12 @@
 import type { EntityManager } from '@mikro-orm/postgresql';
 
-import type { WagerTransactionRepository } from '../../application/repositories/wager-transaction.repository.js';
-import { Money } from '../../domain/money.js';
+import type { WagerTransactionRepository } from '../../../application/ports/wager-transaction.repository.js';
+import { Money } from '../../../domain/money.js';
 import {
   WagerTransaction,
   WagerTransactionKind,
   WagerTransactionStatus,
-} from '../../domain/wager-transaction.js';
+} from '../../../domain/wager-transaction.js';
 
 interface WagerTransactionRow {
   id: string;

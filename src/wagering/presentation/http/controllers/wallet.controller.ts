@@ -1,7 +1,7 @@
 import { Body, Controller, Post } from '@nestjs/common';
-import { Money } from '../shared/domain/money.js';
-import { OpenWalletUseCase } from '../shared/application/use-cases/open-wallet.use-case.js';
-import { CreateWalletDto } from './dto/create-wallet.dto.js';
+import { Money } from '../../../domain/money.js';
+import { OpenWalletUseCase } from '../../../application/use-cases/open-wallet.use-case.js';
+import { CreateWalletDto } from '../dto/create-wallet.dto.js';
 
 @Controller('wallets')
 export class WalletController {
