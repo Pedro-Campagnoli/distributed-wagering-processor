@@ -12,18 +12,19 @@ import { MikroORM } from '@mikro-orm/postgresql';
 import mikroOrmConfig from '@/mikro-orm.config.js';
 
 import { ProcessWagerTransactionUseCase } from '../src/wagering/application/use-cases/process-wager-transaction.use-case.js';
-import { DuplicateRefundError } from '../src/wagering/domain/errors.js';
 import { Money } from '../src/wagering/domain/money.js';
 import {
   WagerTransactionKind,
   WagerTransactionStatus,
 } from '../src/wagering/domain/wager-transaction.js';
 import { LedgerDirection } from '../src/wagering/domain/wallet-ledger-entry.js';
-import { Wallet } from '../src/wagering/domain/wallet.js';
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
-import { MikroOrmWalletRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
+import {
+  expectWalletBalanceMatchesLedger,
+  openWalletFixture,
+} from './support/financial-fixture.js';
 
 const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
 const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
@@ -85,6 +86,8 @@ async function persistedState() {
     entityManager.find(WalletLedgerEntryOrmEntity, { walletId: WALLET_ID }),
   ]);
 
+  expectWalletBalanceMatchesLedger(wallet, ledgerEntries);
+
   return {
     wallet,
     transactions,
@@ -100,18 +103,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase REFUND', () => {
   beforeEach(async () => {
     await orm.schema.clear({ truncate: true });
 
-    const walletRepository = new MikroOrmWalletRepository(orm.em.fork());
-
-    await walletRepository.insert(
-      Wallet.open({
-        id: WALLET_ID,
-        playerId: PLAYER_ID,
-        initialBalance: Money.from({
-          amount: '100.00',
-          currency: 'BRL',
-        }),
-      }),
-    );
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
   });
 
   afterAll(async () => {
@@ -154,7 +146,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase REFUND', () => {
     expect(refund.transaction.failureCode).toBe('INVALID_REFERENCE_KIND');
     expect(refund.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('100.00');
-    expect(state.ledgerEntries).toHaveLength(0);
+    expect(state.ledgerEntries).toHaveLength(1);
   });
 
   it('rejects a reference with incompatible data without another financial effect', async () => {
@@ -170,8 +162,12 @@ describeWithDatabase('ProcessWagerTransactionUseCase REFUND', () => {
     expect(refund.transaction.failureCode).toBe('REFERENCE_DATA_MISMATCH');
     expect(refund.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('75.00');
-    expect(state.ledgerEntries).toHaveLength(1);
-    expect(state.ledgerEntries[0]?.direction).toBe(LedgerDirection.Debit);
+    expect(state.ledgerEntries).toHaveLength(2);
+    expect(
+      state.ledgerEntries.some(
+        (entry) => entry.direction === LedgerDirection.Debit,
+      ),
+    ).toBe(true);
   });
 
   it('rejects an amount different from the BET without another financial effect', async () => {
@@ -186,8 +182,12 @@ describeWithDatabase('ProcessWagerTransactionUseCase REFUND', () => {
     expect(refund.transaction.failureCode).toBe('REFERENCE_AMOUNT_MISMATCH');
     expect(refund.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('75.00');
-    expect(state.ledgerEntries).toHaveLength(1);
-    expect(state.ledgerEntries[0]?.direction).toBe(LedgerDirection.Debit);
+    expect(state.ledgerEntries).toHaveLength(2);
+    expect(
+      state.ledgerEntries.some(
+        (entry) => entry.direction === LedgerDirection.Debit,
+      ),
+    ).toBe(true);
   });
 
   it('rejects a BET that was not processed without financial effects', async () => {
@@ -204,30 +204,59 @@ describeWithDatabase('ProcessWagerTransactionUseCase REFUND', () => {
     expect(refund.transaction.failureCode).toBe('REFERENCE_NOT_PROCESSED');
     expect(refund.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('100.00');
-    expect(state.ledgerEntries).toHaveLength(0);
+    expect(state.ledgerEntries).toHaveLength(1);
   });
 
   it('rejects a second REFUND for the same BET without duplicating effects', async () => {
     await execute(createInput(WagerTransactionKind.Bet, 'bet-once'));
-    await execute(createRefundInput('refund-first', 'bet-once'));
-
-    const secondRefund = execute(
-      createRefundInput('refund-second', 'bet-once'),
+    const firstRefund = await execute(
+      createRefundInput('refund-first', 'bet-once'),
     );
 
-    await expect(secondRefund).rejects.toBeInstanceOf(DuplicateRefundError);
+    const secondRefund = await execute(
+      createRefundInput('refund-second', 'bet-once'),
+    );
 
     const state = await persistedState();
     const refunds = state.transactions.filter(
       (transaction) => transaction.kind === WagerTransactionKind.Refund,
     );
-    const creditLedgerEntries = state.ledgerEntries.filter(
-      (entry) => entry.direction === LedgerDirection.Credit,
+    const firstRefundLedgerEntries = state.ledgerEntries.filter(
+      (entry) => entry.transactionId === firstRefund.transaction.id,
     );
 
+    expect(secondRefund.transaction.status).toBe(
+      WagerTransactionStatus.Rejected,
+    );
+    expect(secondRefund.transaction.failureCode).toBe(
+      'REFERENCE_ALREADY_REFUNDED',
+    );
+    expect(secondRefund.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('100.00');
-    expect(refunds).toHaveLength(1);
-    expect(creditLedgerEntries).toHaveLength(1);
-    expect(state.ledgerEntries).toHaveLength(2);
+    expect(refunds).toHaveLength(2);
+    expect(firstRefundLedgerEntries).toHaveLength(1);
+    expect(state.ledgerEntries).toHaveLength(3);
+  });
+
+  it('allows a corrected REFUND after a rejected attempt', async () => {
+    await execute(createInput(WagerTransactionKind.Bet, 'bet-corrected'));
+
+    const rejected = await execute(
+      createRefundInput('refund-invalid', 'bet-corrected', '20.00'),
+    );
+    const corrected = await execute(
+      createRefundInput('refund-corrected', 'bet-corrected'),
+    );
+    const state = await persistedState();
+    const correctedLedgerEntries = state.ledgerEntries.filter(
+      (entry) => entry.transactionId === corrected.transaction.id,
+    );
+
+    expect(rejected.transaction.status).toBe(WagerTransactionStatus.Rejected);
+    expect(corrected.transaction.status).toBe(WagerTransactionStatus.Processed);
+    expect(state.wallet?.balance).toBe('100.00');
+    expect(correctedLedgerEntries).toHaveLength(1);
+    expect(correctedLedgerEntries[0]?.direction).toBe(LedgerDirection.Credit);
+    expect(state.ledgerEntries).toHaveLength(3);
   });
 });

@@ -9,8 +9,6 @@ import {
   WagerTransactionStatus,
 } from '../../domain/wager-transaction.js';
 import {
-  DuplicateRefundError,
-  DuplicateRollbackError,
   ExternalOpeningTransactionError,
   IdempotencyConflictError,
   InsufficientBalanceError,
@@ -139,9 +137,13 @@ export class ProcessWagerTransactionUseCase {
         referenceExternalTransactionId: input.referenceExternalTransactionId,
       });
 
+      if (wallet.currency !== transaction.money.currency) {
+        transaction.reject('CURRENCY_MISMATCH');
+      }
+
       let reference: WagerTransaction | undefined;
 
-      if (transaction.requiresReference()) {
+      if (!transaction.isTerminal() && transaction.requiresReference()) {
         reference =
           await wagerTransactionRepository.findByProviderAndExternalTransactionId(
             transaction.providerId,
@@ -156,18 +158,12 @@ export class ProcessWagerTransactionUseCase {
           );
 
         if (previousReversal) {
-          if (transaction.kind === WagerTransactionKind.Refund) {
-            throw new DuplicateRefundError(
-              transaction.referenceExternalTransactionId!,
-            );
-          }
-
-          throw new DuplicateRollbackError(
-            transaction.referenceExternalTransactionId!,
+          transaction.reject(
+            this.duplicateReversalFailureCode(transaction.kind),
           );
         }
 
-        if (!reference) {
+        if (!reference && !transaction.isTerminal()) {
           transaction.markPendingReference(
             new Date(
               transaction.createdAt.getTime() + REFERENCE_RETRY_BASE_DELAY_MS,
@@ -226,6 +222,13 @@ export class ProcessWagerTransactionUseCase {
         return;
       }
 
+      if (
+        transaction.nextReferenceRetryAt &&
+        transaction.nextReferenceRetryAt > now
+      ) {
+        return;
+      }
+
       const reference =
         await wagerTransactionRepository.findByProviderAndExternalTransactionId(
           transaction.providerId,
@@ -243,6 +246,26 @@ export class ProcessWagerTransactionUseCase {
           transaction.reject('REFERENCE_NOT_FOUND_AFTER_RETRIES');
         }
 
+        transaction.recordObservedBalance(wallet.balance);
+
+        await wagerTransactionRepository.update(transaction);
+
+        return {
+          transaction,
+          wallet,
+          observedBalance: wallet.balance,
+        };
+      }
+
+      const previousReversal =
+        await wagerTransactionRepository.findByProviderKindAndReferenceExternalTransactionId(
+          transaction.providerId,
+          transaction.kind,
+          transaction.referenceExternalTransactionId!,
+        );
+
+      if (previousReversal) {
+        transaction.reject(this.duplicateReversalFailureCode(transaction.kind));
         transaction.recordObservedBalance(wallet.balance);
 
         await wagerTransactionRepository.update(transaction);
@@ -278,6 +301,13 @@ export class ProcessWagerTransactionUseCase {
     transaction: WagerTransaction,
     reference?: WagerTransaction,
   ): ProcessedWagerTransaction {
+    if (transaction.isTerminal()) {
+      return {
+        transaction,
+        wallet,
+      };
+    }
+
     if (
       transaction.status === WagerTransactionStatus.PendingReference &&
       !reference
@@ -310,6 +340,12 @@ export class ProcessWagerTransactionUseCase {
           wallet,
         };
     }
+  }
+
+  private duplicateReversalFailureCode(kind: WagerTransactionKind): string {
+    return kind === WagerTransactionKind.Refund
+      ? 'REFERENCE_ALREADY_REFUNDED'
+      : 'REFERENCE_ALREADY_ROLLED_BACK';
   }
 
   private processRefund(

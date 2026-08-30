@@ -18,11 +18,13 @@ import {
   WagerTransactionStatus,
 } from '../src/wagering/domain/wager-transaction.js';
 import { LedgerDirection } from '../src/wagering/domain/wallet-ledger-entry.js';
-import { Wallet } from '../src/wagering/domain/wallet.js';
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
-import { MikroOrmWalletRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
+import {
+  expectWalletBalanceMatchesLedger,
+  openWalletFixture,
+} from './support/financial-fixture.js';
 
 const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
 const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
@@ -78,19 +80,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase concurrency', () => {
       truncate: true,
     });
 
-    const setupEntityManager = orm.em.fork();
-    const walletRepository = new MikroOrmWalletRepository(setupEntityManager);
-
-    await walletRepository.insert(
-      Wallet.open({
-        id: WALLET_ID,
-        playerId: PLAYER_ID,
-        initialBalance: Money.from({
-          amount: '100.00',
-          currency: 'BRL',
-        }),
-      }),
-    );
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
   });
 
   afterAll(async () => {
@@ -128,13 +118,15 @@ describeWithDatabase('ProcessWagerTransactionUseCase concurrency', () => {
         kind: WagerTransactionKind.Bet,
       },
     );
-    const debitLedgerEntries = await verificationEntityManager.find(
+    const ledgerEntries = await verificationEntityManager.find(
       WalletLedgerEntryOrmEntity,
-      {
-        walletId: WALLET_ID,
-        direction: LedgerDirection.Debit,
-      },
+      { walletId: WALLET_ID },
     );
+    const debitLedgerEntries = ledgerEntries.filter(
+      (entry) => entry.direction === LedgerDirection.Debit,
+    );
+
+    expectWalletBalanceMatchesLedger(wallet, ledgerEntries);
 
     expect(transactions).toHaveLength(2);
     expect(

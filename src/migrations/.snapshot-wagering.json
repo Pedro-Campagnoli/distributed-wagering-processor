@@ -721,7 +721,7 @@
           "keyName": "wager_transactions_reversal_once_idx",
           "primary": false,
           "unique": true,
-          "where": "((kind)::text = ANY ((ARRAY['REFUND'::character varying, 'ROLLBACK'::character varying])::text[])) AND (reference_external_transaction_id IS NOT NULL)"
+          "where": "((kind)::text = ANY ((ARRAY['REFUND'::character varying, 'ROLLBACK'::character varying])::text[])) AND (reference_external_transaction_id IS NOT NULL) AND ((status)::text = 'PROCESSED'::text)"
         }
       ],
       "checks": [

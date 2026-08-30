@@ -17,11 +17,13 @@ import {
   WagerTransactionKind,
   WagerTransactionStatus,
 } from '../src/wagering/domain/wager-transaction.js';
-import { Wallet } from '../src/wagering/domain/wallet.js';
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
-import { MikroOrmWalletRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
+import {
+  expectWalletBalanceMatchesLedger,
+  openWalletFixture,
+} from './support/financial-fixture.js';
 
 const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
 const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
@@ -68,6 +70,8 @@ async function persistedState() {
     entityManager.find(WalletLedgerEntryOrmEntity, { walletId: WALLET_ID }),
   ]);
 
+  expectWalletBalanceMatchesLedger(wallet, ledgerEntries);
+
   return {
     wallet,
     transactions,
@@ -83,18 +87,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase PENDING_REFERENCE', () => {
   beforeEach(async () => {
     await orm.schema.clear({ truncate: true });
 
-    const walletRepository = new MikroOrmWalletRepository(orm.em.fork());
-
-    await walletRepository.insert(
-      Wallet.open({
-        id: WALLET_ID,
-        playerId: PLAYER_ID,
-        initialBalance: Money.from({
-          amount: '100.00',
-          currency: 'BRL',
-        }),
-      }),
-    );
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
   });
 
   afterAll(async () => {
@@ -116,15 +109,18 @@ describeWithDatabase('ProcessWagerTransactionUseCase PENDING_REFERENCE', () => {
     expect(result.ledgerEntry).toBeUndefined();
     expect(result.observedBalance?.toJSON().amount).toBe('100.00');
     expect(state.wallet?.balance).toBe('100.00');
-    expect(state.transactions).toHaveLength(1);
-    expect(state.transactions[0]?.status).toBe(
-      WagerTransactionStatus.PendingReference,
+    expect(state.transactions).toHaveLength(2);
+    expect(
+      state.transactions.find(
+        (transaction) => transaction.kind === WagerTransactionKind.Refund,
+      )?.status,
+    ).toBe(WagerTransactionStatus.PendingReference);
+    const pending = state.transactions.find(
+      (transaction) => transaction.kind === WagerTransactionKind.Refund,
     );
-    expect(state.transactions[0]?.referenceExternalTransactionId).toBe(
-      'missing-bet',
-    );
-    expect(state.transactions[0]?.failureCode).toBeNull();
-    expect(state.ledgerEntries).toHaveLength(0);
+    expect(pending?.referenceExternalTransactionId).toBe('missing-bet');
+    expect(pending?.failureCode).toBeNull();
+    expect(state.ledgerEntries).toHaveLength(1);
   });
 
   it('persists ROLLBACK as PENDING_REFERENCE without financial effects', async () => {
@@ -143,11 +139,13 @@ describeWithDatabase('ProcessWagerTransactionUseCase PENDING_REFERENCE', () => {
     expect(result.transaction.failureCode).toBeUndefined();
     expect(result.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('100.00');
-    expect(state.transactions).toHaveLength(1);
-    expect(state.transactions[0]?.status).toBe(
-      WagerTransactionStatus.PendingReference,
-    );
-    expect(state.ledgerEntries).toHaveLength(0);
+    expect(state.transactions).toHaveLength(2);
+    expect(
+      state.transactions.find(
+        (transaction) => transaction.kind === WagerTransactionKind.Rollback,
+      )?.status,
+    ).toBe(WagerTransactionStatus.PendingReference);
+    expect(state.ledgerEntries).toHaveLength(1);
   });
 
   it('replays a pending operation without creating duplicates', async () => {
@@ -168,8 +166,8 @@ describeWithDatabase('ProcessWagerTransactionUseCase PENDING_REFERENCE', () => {
     expect(replay.wallet).toBeUndefined();
     expect(replay.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('100.00');
-    expect(state.transactions).toHaveLength(1);
-    expect(state.ledgerEntries).toHaveLength(0);
+    expect(state.transactions).toHaveLength(2);
+    expect(state.ledgerEntries).toHaveLength(1);
   });
 
   it('keeps normal processing when the reference already exists', async () => {
@@ -188,7 +186,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase PENDING_REFERENCE', () => {
     expect(refund.transaction.referenceTransactionId).toBeDefined();
     expect(refund.ledgerEntry).toBeDefined();
     expect(state.wallet?.balance).toBe('100.00');
-    expect(state.transactions).toHaveLength(2);
-    expect(state.ledgerEntries).toHaveLength(2);
+    expect(state.transactions).toHaveLength(3);
+    expect(state.ledgerEntries).toHaveLength(3);
   });
 });

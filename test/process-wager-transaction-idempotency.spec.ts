@@ -18,11 +18,13 @@ import {
   WagerTransactionKind,
   WagerTransactionStatus,
 } from '../src/wagering/domain/wager-transaction.js';
-import { Wallet } from '../src/wagering/domain/wallet.js';
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
-import { MikroOrmWalletRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
+import {
+  expectWalletBalanceMatchesLedger,
+  openWalletFixture,
+} from './support/financial-fixture.js';
 
 const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
 const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
@@ -85,6 +87,8 @@ async function persistedState() {
     }),
   ]);
 
+  expectWalletBalanceMatchesLedger(wallet, ledgerEntries);
+
   return {
     wallet,
     transactions,
@@ -102,18 +106,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
       truncate: true,
     });
 
-    const walletRepository = new MikroOrmWalletRepository(orm.em.fork());
-
-    await walletRepository.insert(
-      Wallet.open({
-        id: WALLET_ID,
-        playerId: PLAYER_ID,
-        initialBalance: Money.from({
-          amount: '100.00',
-          currency: 'BRL',
-        }),
-      }),
-    );
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
   });
 
   afterAll(async () => {
@@ -133,9 +126,13 @@ describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
     expect(result.transaction.status).toBe(WagerTransactionStatus.Processed);
     expect(result.observedBalance?.toJSON().amount).toBe('75.00');
     expect(state.wallet?.balance).toBe('75.00');
-    expect(state.transactions).toHaveLength(1);
-    expect(state.transactions[0]?.observedBalance).toBe('75.00');
-    expect(state.ledgerEntries).toHaveLength(1);
+    expect(state.transactions).toHaveLength(2);
+    expect(
+      state.transactions.find(
+        (transaction) => transaction.id === TRANSACTION_ID,
+      )?.observedBalance,
+    ).toBe('75.00');
+    expect(state.ledgerEntries).toHaveLength(2);
   });
 
   it('does not apply another financial effect for the same key and payload', async () => {
@@ -152,28 +149,24 @@ describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
     expect(replay.wallet).toBeUndefined();
     expect(replay.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('75.00');
-    expect(state.transactions).toHaveLength(1);
-    expect(state.ledgerEntries).toHaveLength(1);
+    expect(state.transactions).toHaveLength(2);
+    expect(state.ledgerEntries).toHaveLength(2);
   });
 
   it('returns the original observed balance after the wallet balance changes', async () => {
     await createUseCase(TRANSACTION_ID, LEDGER_ID).execute(createInput());
 
-    const walletRepository = new MikroOrmWalletRepository(orm.em.fork());
-    const wallet = await walletRepository.findById(WALLET_ID);
-
-    if (!wallet) {
-      throw new Error('Expected wallet fixture to exist');
-    }
-
-    wallet.credit(
-      Money.from({
+    await new ProcessWagerTransactionUseCase(orm.em.fork()).execute({
+      ...createInput(),
+      externalTransactionId: 'win-after-bet',
+      idempotencyKey: 'provider-idempotency:win-after-bet',
+      payloadHash: 'hash:win-after-bet',
+      kind: WagerTransactionKind.Win,
+      money: Money.from({
         amount: '10.00',
         currency: 'BRL',
       }),
-    );
-
-    await walletRepository.update(wallet);
+    });
 
     const replay = await createUseCase(
       UNUSED_TRANSACTION_ID,
@@ -184,7 +177,26 @@ describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
     expect(replay.observedBalance?.toJSON().amount).toBe('75.00');
     expect(replay.wallet).toBeUndefined();
     expect(state.wallet?.balance).toBe('85.00');
-    expect(state.transactions).toHaveLength(1);
+    expect(state.transactions).toHaveLength(3);
+    expect(state.ledgerEntries).toHaveLength(3);
+  });
+
+  it('rejects a wallet currency mismatch without financial effects', async () => {
+    const result = await createUseCase(TRANSACTION_ID, LEDGER_ID).execute({
+      ...createInput(),
+      money: Money.from({
+        amount: '25.00',
+        currency: 'USD',
+      }),
+    });
+    const state = await persistedState();
+
+    expect(result.transaction.status).toBe(WagerTransactionStatus.Rejected);
+    expect(result.transaction.failureCode).toBe('CURRENCY_MISMATCH');
+    expect(result.ledgerEntry).toBeUndefined();
+    expect(result.observedBalance?.toJSON().amount).toBe('100.00');
+    expect(state.wallet?.balance).toBe('100.00');
+    expect(state.transactions).toHaveLength(2);
     expect(state.ledgerEntries).toHaveLength(1);
   });
 
@@ -213,16 +225,20 @@ describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
           response.transaction.payloadHash === input.payloadHash,
       ),
     ).toBe(true);
-    expect(state.transactions).toHaveLength(1);
-    expect(state.transactions[0]?.id).toBe(responses[0]?.transaction.id);
-    expect(state.transactions[0]?.observedBalance).toBe('75.00');
-    expect(state.ledgerEntries).toHaveLength(1);
-    expect(state.ledgerEntries[0]?.transactionId).toBe(
-      state.transactions[0]?.id,
+    const wagerTransaction = state.transactions.find(
+      (transaction) => transaction.kind === WagerTransactionKind.Bet,
     );
-    expect(state.ledgerEntries[0]?.amount).toBe('25.00');
-    expect(state.ledgerEntries[0]?.balanceBefore).toBe('100.00');
-    expect(state.ledgerEntries[0]?.balanceAfter).toBe('75.00');
+    const wagerLedger = state.ledgerEntries.find(
+      (entry) => entry.transactionId === wagerTransaction?.id,
+    );
+
+    expect(state.transactions).toHaveLength(2);
+    expect(wagerTransaction?.id).toBe(responses[0]?.transaction.id);
+    expect(wagerTransaction?.observedBalance).toBe('75.00');
+    expect(state.ledgerEntries).toHaveLength(2);
+    expect(wagerLedger?.amount).toBe('25.00');
+    expect(wagerLedger?.balanceBefore).toBe('100.00');
+    expect(wagerLedger?.balanceAfter).toBe('75.00');
     expect(state.wallet?.balance).toBe('75.00');
   });
 
@@ -241,7 +257,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
     const state = await persistedState();
 
     expect(state.wallet?.balance).toBe('75.00');
-    expect(state.transactions).toHaveLength(1);
-    expect(state.ledgerEntries).toHaveLength(1);
+    expect(state.transactions).toHaveLength(2);
+    expect(state.ledgerEntries).toHaveLength(2);
   });
 });

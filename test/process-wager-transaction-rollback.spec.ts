@@ -12,18 +12,19 @@ import { MikroORM } from '@mikro-orm/postgresql';
 import mikroOrmConfig from '@/mikro-orm.config.js';
 
 import { ProcessWagerTransactionUseCase } from '../src/wagering/application/use-cases/process-wager-transaction.use-case.js';
-import { DuplicateRollbackError } from '../src/wagering/domain/errors.js';
 import { Money } from '../src/wagering/domain/money.js';
 import {
   WagerTransactionKind,
   WagerTransactionStatus,
 } from '../src/wagering/domain/wager-transaction.js';
 import { LedgerDirection } from '../src/wagering/domain/wallet-ledger-entry.js';
-import { Wallet } from '../src/wagering/domain/wallet.js';
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
-import { MikroOrmWalletRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
+import {
+  expectWalletBalanceMatchesLedger,
+  openWalletFixture,
+} from './support/financial-fixture.js';
 
 const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
 const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
@@ -86,6 +87,8 @@ async function persistedState() {
     entityManager.find(WalletLedgerEntryOrmEntity, { walletId: WALLET_ID }),
   ]);
 
+  expectWalletBalanceMatchesLedger(wallet, ledgerEntries);
+
   return {
     wallet,
     transactions,
@@ -132,18 +135,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase ROLLBACK', () => {
   beforeEach(async () => {
     await orm.schema.clear({ truncate: true });
 
-    const walletRepository = new MikroOrmWalletRepository(orm.em.fork());
-
-    await walletRepository.insert(
-      Wallet.open({
-        id: WALLET_ID,
-        playerId: PLAYER_ID,
-        initialBalance: Money.from({
-          amount: '100.00',
-          currency: 'BRL',
-        }),
-      }),
-    );
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
   });
 
   afterAll(async () => {
@@ -215,7 +207,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase ROLLBACK', () => {
     expect(rollback.transaction.failureCode).toBe('INVALID_REFERENCE_KIND');
     expect(rollback.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('100.00');
-    expect(state.ledgerEntries).toHaveLength(0);
+    expect(state.ledgerEntries).toHaveLength(1);
   });
 
   it('rejects an amount different from the reference without another effect', async () => {
@@ -235,7 +227,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase ROLLBACK', () => {
     expect(rollback.transaction.failureCode).toBe('REFERENCE_AMOUNT_MISMATCH');
     expect(rollback.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('75.00');
-    expect(state.ledgerEntries).toHaveLength(1);
+    expect(state.ledgerEntries).toHaveLength(2);
   });
 
   it('rejects a second ROLLBACK without duplicating effects', async () => {
@@ -248,7 +240,7 @@ describeWithDatabase('ProcessWagerTransactionUseCase ROLLBACK', () => {
       ),
     );
 
-    const secondRollback = execute(
+    const secondRollback = await execute(
       createReversalInput(
         WagerTransactionKind.Rollback,
         'rollback-second',
@@ -256,16 +248,52 @@ describeWithDatabase('ProcessWagerTransactionUseCase ROLLBACK', () => {
       ),
     );
 
-    await expect(secondRollback).rejects.toBeInstanceOf(DuplicateRollbackError);
-
     const state = await persistedState();
     const rollbacks = state.transactions.filter(
       (transaction) => transaction.kind === WagerTransactionKind.Rollback,
     );
 
+    expect(secondRollback.transaction.status).toBe(
+      WagerTransactionStatus.Rejected,
+    );
+    expect(secondRollback.transaction.failureCode).toBe(
+      'REFERENCE_ALREADY_ROLLED_BACK',
+    );
+    expect(secondRollback.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('100.00');
-    expect(rollbacks).toHaveLength(1);
-    expect(state.ledgerEntries).toHaveLength(2);
+    expect(rollbacks).toHaveLength(2);
+    expect(state.ledgerEntries).toHaveLength(3);
+  });
+
+  it('allows a corrected ROLLBACK after a rejected attempt', async () => {
+    await execute(createInput(WagerTransactionKind.Bet, 'bet-corrected'));
+
+    const rejected = await execute(
+      createReversalInput(
+        WagerTransactionKind.Rollback,
+        'rollback-invalid',
+        'bet-corrected',
+        '20.00',
+      ),
+    );
+    const corrected = await execute(
+      createReversalInput(
+        WagerTransactionKind.Rollback,
+        'rollback-corrected',
+        'bet-corrected',
+      ),
+    );
+    const state = await persistedState();
+    const correctedLedgerEntries = state.ledgerEntries.filter(
+      (entry) => entry.transactionId === corrected.transaction.id,
+    );
+
+    expect(rejected.transaction.status).toBe(WagerTransactionStatus.Rejected);
+    expect(corrected.transaction.status).toBe(WagerTransactionStatus.Processed);
+    expect(state.wallet?.balance).toBe('100.00');
+    expect(correctedLedgerEntries).toHaveLength(1);
+    expect(correctedLedgerEntries[0]?.direction).toBe(LedgerDirection.Credit);
+    expect(state.ledgerEntries).toHaveLength(3);
   });
 
   it('rejects a ROLLBACK that would make the balance negative', async () => {
@@ -289,6 +317,6 @@ describeWithDatabase('ProcessWagerTransactionUseCase ROLLBACK', () => {
     );
     expect(rollback.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('0.00');
-    expect(state.ledgerEntries).toHaveLength(2);
+    expect(state.ledgerEntries).toHaveLength(3);
   });
 });

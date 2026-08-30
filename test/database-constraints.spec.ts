@@ -469,6 +469,8 @@ describeDatabase('PostgreSQL database invariants', () => {
         externalTransactionId: 'refund-1',
         kind: 'REFUND',
         referenceExternalTransactionId: 'external-bet-1',
+        status: 'PROCESSED',
+        processedAt: CREATED_AT,
       });
 
       await expectDatabaseError(
@@ -478,9 +480,31 @@ describeDatabase('PostgreSQL database invariants', () => {
           idempotencyKey: 'idempotency-2',
           kind: 'REFUND',
           referenceExternalTransactionId: 'external-bet-1',
+          status: 'PROCESSED',
+          processedAt: CREATED_AT,
         }),
         'wager_transactions_reversal_once_idx',
       );
+    });
+
+    it('allows a corrected reversal after a rejected attempt', async () => {
+      await insertTransaction({
+        externalTransactionId: 'refund-rejected',
+        kind: 'REFUND',
+        referenceExternalTransactionId: 'external-bet-1',
+        status: 'REJECTED',
+        failureCode: 'REFERENCE_AMOUNT_MISMATCH',
+      });
+
+      await insertTransaction({
+        id: SECOND_TRANSACTION_ID,
+        externalTransactionId: 'refund-corrected',
+        idempotencyKey: 'idempotency-2',
+        kind: 'REFUND',
+        referenceExternalTransactionId: 'external-bet-1',
+        status: 'PROCESSED',
+        processedAt: CREATED_AT,
+      });
     });
   });
 

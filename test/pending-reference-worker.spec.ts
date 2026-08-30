@@ -22,12 +22,14 @@ import {
   WagerTransactionStatus,
 } from '../src/wagering/domain/wager-transaction.js';
 import { LedgerDirection } from '../src/wagering/domain/wallet-ledger-entry.js';
-import { Wallet } from '../src/wagering/domain/wallet.js';
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
-import { MikroOrmWalletRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
 import { PendingReferenceWorker } from '../src/wagering/infrastructure/workers/pending-reference.worker.js';
+import {
+  expectWalletBalanceMatchesLedger,
+  openWalletFixture,
+} from './support/financial-fixture.js';
 
 const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
 const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
@@ -75,6 +77,8 @@ async function persistedState() {
     entityManager.find(WalletLedgerEntryOrmEntity, { walletId: WALLET_ID }),
   ]);
 
+  expectWalletBalanceMatchesLedger(wallet, ledgerEntries);
+
   return {
     wallet,
     transactions,
@@ -102,18 +106,7 @@ describeWithDatabase('PendingReferenceWorker', () => {
   beforeEach(async () => {
     await orm.schema.clear({ truncate: true });
 
-    const walletRepository = new MikroOrmWalletRepository(orm.em.fork());
-
-    await walletRepository.insert(
-      Wallet.open({
-        id: WALLET_ID,
-        playerId: PLAYER_ID,
-        initialBalance: Money.from({
-          amount: '100.00',
-          currency: 'BRL',
-        }),
-      }),
-    );
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
   });
 
   afterAll(async () => {
@@ -134,7 +127,7 @@ describeWithDatabase('PendingReferenceWorker', () => {
       (entry) => entry.transactionId === pending.transaction.id,
     );
 
-    expect(state.transactions).toHaveLength(2);
+    expect(state.transactions).toHaveLength(3);
     expect(processed?.status).toBe(WagerTransactionStatus.Processed);
     expect(processed?.referenceTransactionId).toBe(reference.transaction.id);
     expect(processed?.observedBalance).toBe('100.00');
@@ -168,7 +161,7 @@ describeWithDatabase('PendingReferenceWorker', () => {
       now.getTime() + REFERENCE_RETRY_BASE_DELAY_MS * 2,
     );
     expect(state.wallet?.balance).toBe('100.00');
-    expect(state.ledgerEntries).toHaveLength(0);
+    expect(state.ledgerEntries).toHaveLength(1);
 
     const secondRunAt = unchanged?.nextReferenceRetryAt;
 
@@ -189,7 +182,39 @@ describeWithDatabase('PendingReferenceWorker', () => {
       secondRunAt.getTime() + REFERENCE_RETRY_BASE_DELAY_MS * 4,
     );
     expect(retriedState.wallet?.balance).toBe('100.00');
-    expect(retriedState.ledgerEntries).toHaveLength(0);
+    expect(retriedState.ledgerEntries).toHaveLength(1);
+  });
+
+  it('increments a due retry only once across concurrent workers', async () => {
+    const pending = await execute(
+      createInput(
+        WagerTransactionKind.Refund,
+        'refund-concurrent-retry',
+        'missing-concurrent-bet',
+      ),
+    );
+    const runAt = new Date(Date.now() + 60_000);
+    const workers = Array.from(
+      { length: 5 },
+      () => new PendingReferenceWorker(orm.em),
+    );
+
+    await Promise.all(
+      workers.map((currentWorker) => currentWorker.runOnce(runAt)),
+    );
+
+    const state = await persistedState();
+    const retried = state.transactions.find(
+      (transaction) => transaction.id === pending.transaction.id,
+    );
+
+    expect(retried?.status).toBe(WagerTransactionStatus.PendingReference);
+    expect(retried?.referenceRetryAttempts).toBe(1);
+    expect(retried?.nextReferenceRetryAt?.getTime()).toBe(
+      runAt.getTime() + REFERENCE_RETRY_BASE_DELAY_MS * 2,
+    );
+    expect(state.wallet?.balance).toBe('100.00');
+    expect(state.ledgerEntries).toHaveLength(1);
   });
 
   it('does not duplicate balance or ledger on repeated worker executions', async () => {
@@ -237,6 +262,6 @@ describeWithDatabase('PendingReferenceWorker', () => {
     expect(rejected?.referenceRetryAttempts).toBe(MAX_REFERENCE_RETRY_ATTEMPTS);
     expect(rejected?.nextReferenceRetryAt).toBeNull();
     expect(state.wallet?.balance).toBe('100.00');
-    expect(state.ledgerEntries).toHaveLength(0);
+    expect(state.ledgerEntries).toHaveLength(1);
   });
 });

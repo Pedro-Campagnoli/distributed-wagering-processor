@@ -73,6 +73,7 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
       providerId,
       kind,
       referenceExternalTransactionId,
+      status: WagerTransactionStatus.Processed,
     });
 
     if (!entity) {
