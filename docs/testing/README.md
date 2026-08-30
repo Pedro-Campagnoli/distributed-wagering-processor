@@ -10,6 +10,7 @@
 ## Application
 
 - [OpenWalletUseCase](./application/open-wallet.md)
+- [ProcessWagerTransactionUseCase](./application/process-wager-transaction.md)
 
 ## Database
 

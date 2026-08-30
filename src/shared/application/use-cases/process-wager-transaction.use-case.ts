@@ -79,12 +79,64 @@ export class ProcessWagerTransactionUseCase {
       case WagerTransactionKind.Bet:
         return this.processBet(wallet, transaction);
 
+      case WagerTransactionKind.Win:
+        return this.processWin(wallet, transaction);
+
+      case WagerTransactionKind.Loss:
+        return this.processLoss(wallet, transaction);
+
       default:
         return {
           transaction,
           wallet,
         };
     }
+  }
+
+  private processLoss(
+    wallet: Wallet,
+    transaction: WagerTransaction,
+  ): ProcessWagerTransactionOutput {
+    transaction.markProcessed(undefined, new Date());
+
+    return {
+      transaction,
+      wallet,
+    };
+  }
+
+  private processWin(
+    wallet: Wallet,
+    transaction: WagerTransaction,
+  ): ProcessWagerTransactionOutput {
+    const balanceChange = wallet.credit(transaction.money);
+
+    if (!balanceChange) {
+      transaction.reject('INVALID_AMOUNT');
+
+      return {
+        transaction,
+        wallet,
+      };
+    }
+
+    transaction.markProcessed(undefined, new Date());
+
+    const ledgerEntry = WalletLedgerEntry.create({
+      id: this.idGenerator(),
+      walletId: wallet.id,
+      transactionId: transaction.id,
+      direction: transaction.ledgerDirectionFor(),
+      money: transaction.money,
+      balanceBefore: balanceChange.balanceBefore,
+      balanceAfter: balanceChange.balanceAfter,
+    });
+
+    return {
+      transaction,
+      wallet,
+      ledgerEntry,
+    };
   }
 
   private processBet(
