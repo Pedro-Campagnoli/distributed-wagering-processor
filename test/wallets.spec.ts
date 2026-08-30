@@ -1,6 +1,8 @@
-import { MikroORM } from '@mikro-orm/postgresql';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+
+import { type EntityManager, MikroORM } from '@mikro-orm/postgresql';
+
 import {
   afterAll,
   beforeAll,
@@ -9,9 +11,15 @@ import {
   expect,
   test,
 } from 'bun:test';
+
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
+
+import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
+import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
+import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
+
 import { GlobalExceptionFilter } from '../src/wagering/presentation/http/filters/global-exception.filter.js';
 
 const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
@@ -23,6 +31,7 @@ const PLAYER_ID = 'd81561b6-fd23-4d38-8fbd-5b93fc5ec429';
 describeDatabase('POST /wallets', () => {
   let app: INestApplication;
   let orm: MikroORM;
+  let em: EntityManager;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -46,32 +55,18 @@ describeDatabase('POST /wallets', () => {
   });
 
   beforeEach(async () => {
-    const entityManager = orm.em.fork();
+    await orm.schema.clear({
+      truncate: true,
+    });
 
-    await entityManager.execute(`
-      truncate table
-        wallet_ledger_entries,
-        wager_transactions,
-        wallets,
-        inbox_messages,
-        outbox_messages
-      cascade
-    `);
+    em = orm.em.fork();
   });
 
   afterAll(async () => {
     if (orm) {
-      const entityManager = orm.em.fork();
-
-      await entityManager.execute(`
-        truncate table
-          wallet_ledger_entries,
-          wager_transactions,
-          wallets,
-          inbox_messages,
-          outbox_messages
-        cascade
-      `);
+      await orm.schema.clear({
+        truncate: true,
+      });
     }
 
     if (app) {
@@ -102,38 +97,25 @@ describeDatabase('POST /wallets', () => {
       version: 1,
     });
 
-    const entityManager = orm.em.fork();
+    const walletId = response.body.id as string;
 
-    const [walletCount] = await entityManager.execute<{ count: number }[]>(
-      `
-        select count(*)::int as count
-        from wallets
-        where id = ?
-      `,
-      [response.body.id],
-    );
+    const [walletCount, transactionCount, ledgerCount] = await Promise.all([
+      em.count(WalletOrmEntity, {
+        id: walletId,
+      }),
 
-    const [transactionCount] = await entityManager.execute<{ count: number }[]>(
-      `
-        select count(*)::int as count
-        from wager_transactions
-        where wallet_id = ?
-      `,
-      [response.body.id],
-    );
+      em.count(WagerTransactionOrmEntity, {
+        walletId,
+      }),
 
-    const [ledgerCount] = await entityManager.execute<{ count: number }[]>(
-      `
-        select count(*)::int as count
-        from wallet_ledger_entries
-        where wallet_id = ?
-      `,
-      [response.body.id],
-    );
+      em.count(WalletLedgerEntryOrmEntity, {
+        walletId,
+      }),
+    ]);
 
-    expect(walletCount?.count).toBe(1);
-    expect(transactionCount?.count).toBe(0);
-    expect(ledgerCount?.count).toBe(0);
+    expect(walletCount).toBe(1);
+    expect(transactionCount).toBe(0);
+    expect(ledgerCount).toBe(0);
   });
 
   test('creates a wallet with OPENING and CREDIT ledger for positive balance', async () => {
@@ -159,64 +141,39 @@ describeDatabase('POST /wallets', () => {
       version: 1,
     });
 
-    const entityManager = orm.em.fork();
+    const walletId = response.body.id as string;
 
-    const [transaction] = await entityManager.execute<
-      {
-        kind: string;
-        status: string;
-        amount: string;
-        currency: string;
-      }[]
-    >(
-      `
-        select
-          kind,
-          status,
-          amount::text as amount,
-          currency
-        from wager_transactions
-        where wallet_id = ?
-      `,
-      [response.body.id],
-    );
+    em.clear();
 
-    expect(transaction).toEqual({
-      kind: 'OPENING',
-      status: 'PROCESSED',
-      amount: '100.00',
-      currency: 'BRL',
+    const transaction = await em.findOne(WagerTransactionOrmEntity, {
+      walletId,
     });
 
-    const [ledger] = await entityManager.execute<
-      {
-        direction: string;
-        amount: string;
-        balanceBefore: string;
-        balanceAfter: string;
-        currency: string;
-      }[]
-    >(
-      `
-        select
-          direction,
-          amount::text as amount,
-          balance_before::text as "balanceBefore",
-          balance_after::text as "balanceAfter",
-          currency
-        from wallet_ledger_entries
-        where wallet_id = ?
-      `,
-      [response.body.id],
-    );
+    expect(transaction).toBeDefined();
 
-    expect(ledger).toEqual({
-      direction: 'CREDIT',
-      amount: '100.00',
-      balanceBefore: '0.00',
-      balanceAfter: '100.00',
-      currency: 'BRL',
+    expect(transaction?.kind).toBe('OPENING');
+
+    expect(transaction?.status).toBe('PROCESSED');
+
+    expect(transaction?.amount).toBe('100.00');
+
+    expect(transaction?.currency).toBe('BRL');
+
+    const ledger = await em.findOne(WalletLedgerEntryOrmEntity, {
+      walletId,
     });
+
+    expect(ledger).toBeDefined();
+
+    expect(ledger?.direction).toBe('CREDIT');
+
+    expect(ledger?.amount).toBe('100.00');
+
+    expect(ledger?.balanceBefore).toBe('0.00');
+
+    expect(ledger?.balanceAfter).toBe('100.00');
+
+    expect(ledger?.currency).toBe('BRL');
   });
 
   test('rejects an invalid transport payload', async () => {
