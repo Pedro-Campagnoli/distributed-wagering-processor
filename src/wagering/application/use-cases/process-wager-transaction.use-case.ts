@@ -36,6 +36,13 @@ export interface ProcessWagerTransactionInput {
 
 export interface ProcessWagerTransactionOutput {
   transaction: WagerTransaction;
+  observedBalance?: Money;
+  wallet?: Wallet;
+  ledgerEntry?: WalletLedgerEntry;
+}
+
+interface ProcessedWagerTransaction {
+  transaction: WagerTransaction;
   wallet: Wallet;
   ledgerEntry?: WalletLedgerEntry;
 }
@@ -63,18 +70,6 @@ export class ProcessWagerTransactionUseCase {
       const walletLedgerEntryRepository =
         new MikroOrmWalletLedgerEntryRepository(tx);
 
-      const wallet = await walletRepository.findById(input.walletId, {
-        lock: true,
-      });
-
-      if (!wallet) {
-        throw new WalletNotFoundError(input.walletId);
-      }
-
-      if (wallet.playerId !== input.playerId) {
-        throw new WalletPlayerMismatchError();
-      }
-
       const existingTransaction =
         await wagerTransactionRepository.findByIdempotencyKey(
           input.idempotencyKey,
@@ -87,7 +82,35 @@ export class ProcessWagerTransactionUseCase {
 
         return {
           transaction: existingTransaction,
-          wallet,
+          observedBalance: existingTransaction.observedBalance,
+        };
+      }
+
+      const wallet = await walletRepository.findById(input.walletId, {
+        lock: true,
+      });
+
+      if (!wallet) {
+        throw new WalletNotFoundError(input.walletId);
+      }
+
+      if (wallet.playerId !== input.playerId) {
+        throw new WalletPlayerMismatchError();
+      }
+
+      const concurrentTransaction =
+        await wagerTransactionRepository.findByIdempotencyKey(
+          input.idempotencyKey,
+        );
+
+      if (concurrentTransaction) {
+        if (!concurrentTransaction.matchesPayload(input.payloadHash)) {
+          throw new IdempotencyConflictError(input.idempotencyKey);
+        }
+
+        return {
+          transaction: concurrentTransaction,
+          observedBalance: concurrentTransaction.observedBalance,
         };
       }
 
@@ -107,6 +130,9 @@ export class ProcessWagerTransactionUseCase {
       });
 
       const result = this.processTransaction(wallet, transaction);
+      const observedBalance = result.wallet.balance;
+
+      result.transaction.recordObservedBalance(observedBalance);
 
       await wagerTransactionRepository.insert(result.transaction);
 
@@ -115,14 +141,17 @@ export class ProcessWagerTransactionUseCase {
         await walletLedgerEntryRepository.insert(result.ledgerEntry);
       }
 
-      return result;
+      return {
+        ...result,
+        observedBalance,
+      };
     });
   }
 
   private processTransaction(
     wallet: Wallet,
     transaction: WagerTransaction,
-  ): ProcessWagerTransactionOutput {
+  ): ProcessedWagerTransaction {
     switch (transaction.kind) {
       case WagerTransactionKind.Bet:
         return this.processBet(wallet, transaction);
@@ -144,7 +173,7 @@ export class ProcessWagerTransactionUseCase {
   private processLoss(
     wallet: Wallet,
     transaction: WagerTransaction,
-  ): ProcessWagerTransactionOutput {
+  ): ProcessedWagerTransaction {
     transaction.markProcessed(undefined, new Date());
 
     return {
@@ -156,7 +185,7 @@ export class ProcessWagerTransactionUseCase {
   private processWin(
     wallet: Wallet,
     transaction: WagerTransaction,
-  ): ProcessWagerTransactionOutput {
+  ): ProcessedWagerTransaction {
     const balanceChange = wallet.credit(transaction.money);
 
     if (!balanceChange) {
@@ -190,7 +219,7 @@ export class ProcessWagerTransactionUseCase {
   private processBet(
     wallet: Wallet,
     transaction: WagerTransaction,
-  ): ProcessWagerTransactionOutput {
+  ): ProcessedWagerTransaction {
     try {
       const balanceChange = wallet.debit(transaction.money);
 

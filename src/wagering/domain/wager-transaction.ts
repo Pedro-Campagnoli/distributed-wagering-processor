@@ -58,6 +58,7 @@ export interface WagerTransactionState {
   referenceTransactionId?: string;
   failureCode?: FailureCode;
   processedAt?: Date;
+  observedBalance?: Money;
 }
 
 export class WagerTransaction {
@@ -79,6 +80,7 @@ export class WagerTransaction {
     private _referenceTransactionId?: string,
     private _failureCode?: FailureCode,
     private _processedAt?: Date,
+    private _observedBalance?: Money,
   ) {}
 
   static create(props: CreateWagerTransactionProps): WagerTransaction {
@@ -126,6 +128,7 @@ export class WagerTransaction {
       state.referenceTransactionId,
       state.failureCode,
       state.processedAt,
+      state.observedBalance,
     );
   }
 
@@ -145,6 +148,10 @@ export class WagerTransaction {
     return this._processedAt;
   }
 
+  get observedBalance(): Money | undefined {
+    return this._observedBalance;
+  }
+
   isTerminal(): boolean {
     return (
       this._status === WagerTransactionStatus.Processed ||
@@ -159,6 +166,10 @@ export class WagerTransaction {
 
   matchesPayload(payloadHash: string): boolean {
     return this.payloadHash === payloadHash;
+  }
+
+  recordObservedBalance(balance: Money): void {
+    this._observedBalance = balance;
   }
 
   affectsBalance(): boolean {

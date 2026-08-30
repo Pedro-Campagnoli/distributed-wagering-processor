@@ -131,8 +131,10 @@ describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
     const state = await persistedState();
 
     expect(result.transaction.status).toBe(WagerTransactionStatus.Processed);
+    expect(result.observedBalance?.toJSON().amount).toBe('75.00');
     expect(state.wallet?.balance).toBe('75.00');
     expect(state.transactions).toHaveLength(1);
+    expect(state.transactions[0]?.observedBalance).toBe('75.00');
     expect(state.ledgerEntries).toHaveLength(1);
   });
 
@@ -146,8 +148,42 @@ describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
     const state = await persistedState();
 
     expect(replay.transaction.id).toBe(TRANSACTION_ID);
+    expect(replay.observedBalance?.toJSON().amount).toBe('75.00');
+    expect(replay.wallet).toBeUndefined();
     expect(replay.ledgerEntry).toBeUndefined();
     expect(state.wallet?.balance).toBe('75.00');
+    expect(state.transactions).toHaveLength(1);
+    expect(state.ledgerEntries).toHaveLength(1);
+  });
+
+  it('returns the original observed balance after the wallet balance changes', async () => {
+    await createUseCase(TRANSACTION_ID, LEDGER_ID).execute(createInput());
+
+    const walletRepository = new MikroOrmWalletRepository(orm.em.fork());
+    const wallet = await walletRepository.findById(WALLET_ID);
+
+    if (!wallet) {
+      throw new Error('Expected wallet fixture to exist');
+    }
+
+    wallet.credit(
+      Money.from({
+        amount: '10.00',
+        currency: 'BRL',
+      }),
+    );
+
+    await walletRepository.update(wallet);
+
+    const replay = await createUseCase(
+      UNUSED_TRANSACTION_ID,
+      UNUSED_LEDGER_ID,
+    ).execute(createInput());
+    const state = await persistedState();
+
+    expect(replay.observedBalance?.toJSON().amount).toBe('75.00');
+    expect(replay.wallet).toBeUndefined();
+    expect(state.wallet?.balance).toBe('85.00');
     expect(state.transactions).toHaveLength(1);
     expect(state.ledgerEntries).toHaveLength(1);
   });

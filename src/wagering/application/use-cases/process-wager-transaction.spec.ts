@@ -91,7 +91,7 @@ describe('ProcessWagerTransactionUseCase', () => {
 
       expect(result.transaction.status).toBe(WagerTransactionStatus.Processed);
 
-      expect(result.wallet.balance.toJSON().amount).toBe('75.00');
+      expect(result.wallet?.balance.toJSON().amount).toBe('75.00');
 
       expect(result.ledgerEntry).toBeDefined();
     });
@@ -131,7 +131,7 @@ describe('ProcessWagerTransactionUseCase', () => {
 
       expect(result.transaction.status).toBe(WagerTransactionStatus.Rejected);
 
-      expect(result.wallet.balance.toJSON().amount).toBe('100.00');
+      expect(result.wallet?.balance.toJSON().amount).toBe('100.00');
 
       expect(result.ledgerEntry).toBeUndefined();
     });
@@ -152,7 +152,7 @@ describe('ProcessWagerTransactionUseCase', () => {
 
       expect(result.transaction.status).toBe(WagerTransactionStatus.Processed);
 
-      expect(result.wallet.balance.toJSON().amount).toBe('125.00');
+      expect(result.wallet?.balance.toJSON().amount).toBe('125.00');
 
       expect(result.ledgerEntry).toBeDefined();
 
@@ -179,7 +179,7 @@ describe('ProcessWagerTransactionUseCase', () => {
 
       expect(result.transaction.status).toBe(WagerTransactionStatus.Processed);
 
-      expect(result.wallet.balance.toJSON().amount).toBe('25.00');
+      expect(result.wallet?.balance.toJSON().amount).toBe('25.00');
 
       expect(result.ledgerEntry?.direction).toBe(LedgerDirection.Credit);
     });
@@ -202,7 +202,7 @@ describe('ProcessWagerTransactionUseCase', () => {
 
       expect(result.transaction.status).toBe(WagerTransactionStatus.Processed);
 
-      expect(result.wallet.balance.toJSON().amount).toBe('100.00');
+      expect(result.wallet?.balance.toJSON().amount).toBe('100.00');
 
       expect(result.ledgerEntry).toBeUndefined();
     });
