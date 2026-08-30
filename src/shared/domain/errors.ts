@@ -68,3 +68,17 @@ export class ExternalOpeningTransactionError extends Error {
     this.name = 'ExternalOpeningTransactionError';
   }
 }
+
+export class WalletNotFoundError extends Error {
+  constructor(walletId: string) {
+    super(`Wallet not found: ${walletId}`);
+    this.name = 'WalletNotFoundError';
+  }
+}
+
+export class WalletPlayerMismatchError extends Error {
+  constructor() {
+    super('Wallet does not belong to the transaction player');
+    this.name = 'WalletPlayerMismatchError';
+  }
+}
