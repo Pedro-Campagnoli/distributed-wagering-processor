@@ -4,6 +4,7 @@ import { WalletOrmEntity } from './wagering/infrastructure/persistence/entities/
 import { WagerTransactionOrmEntity } from './wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from './wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { InboxMessageOrmEntity } from './wagering/infrastructure/persistence/entities/inbox-message.orm-entity.js';
+import { OutboxMessageOrmEntity } from './wagering/infrastructure/persistence/entities/outbox-message.orm-entity.js';
 import { ReflectMetadataProvider } from '@mikro-orm/decorators/legacy';
 
 export default defineConfig({
@@ -18,6 +19,7 @@ export default defineConfig({
     WagerTransactionOrmEntity,
     WalletLedgerEntryOrmEntity,
     InboxMessageOrmEntity,
+    OutboxMessageOrmEntity,
   ],
 
   metadataProvider: ReflectMetadataProvider,

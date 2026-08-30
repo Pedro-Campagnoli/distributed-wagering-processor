@@ -20,6 +20,7 @@ import { WalletLedgerEntry } from '../../domain/wallet-ledger-entry.js';
 import { MikroOrmWagerTransactionRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wager-transaction.repository.js';
 import { MikroOrmWalletLedgerEntryRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet-ledger-entry.repository.js';
 import { MikroOrmWalletRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
+import { enqueueWagerIntegrationEvents } from '../services/enqueue-wager-integration-events.js';
 
 export interface ProcessWagerTransactionInput {
   providerId: string;
@@ -184,6 +185,8 @@ export class ProcessWagerTransactionUseCase {
         await walletLedgerEntryRepository.insert(result.ledgerEntry);
       }
 
+      await enqueueWagerIntegrationEvents(tx, result);
+
       return {
         ...result,
         observedBalance,
@@ -250,6 +253,13 @@ export class ProcessWagerTransactionUseCase {
 
         await wagerTransactionRepository.update(transaction);
 
+        if (attempt >= MAX_REFERENCE_RETRY_ATTEMPTS) {
+          await enqueueWagerIntegrationEvents(tx, {
+            transaction,
+            wallet,
+          });
+        }
+
         return {
           transaction,
           wallet,
@@ -270,6 +280,11 @@ export class ProcessWagerTransactionUseCase {
 
         await wagerTransactionRepository.update(transaction);
 
+        await enqueueWagerIntegrationEvents(tx, {
+          transaction,
+          wallet,
+        });
+
         return {
           transaction,
           wallet,
@@ -288,6 +303,8 @@ export class ProcessWagerTransactionUseCase {
         await walletRepository.update(result.wallet);
         await walletLedgerEntryRepository.insert(result.ledgerEntry);
       }
+
+      await enqueueWagerIntegrationEvents(tx, result);
 
       return {
         ...result,

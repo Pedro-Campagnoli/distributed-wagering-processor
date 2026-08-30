@@ -9,10 +9,12 @@ import { OpenWalletUseCase } from './wagering/application/use-cases/open-wallet.
 import { PendingReferenceWorker } from './wagering/infrastructure/workers/pending-reference.worker.js';
 import {
   createSqsClient,
+  getWagerEventsQueueUrl,
   getWagerQueueUrl,
 } from './wagering/infrastructure/messaging/sqs-client.js';
 import { WagerTransactionConsumer } from './wagering/infrastructure/messaging/wager-transaction.consumer.js';
 import { WagerTransactionProducer } from './wagering/infrastructure/messaging/wager-transaction.producer.js';
+import { OutboxPublisherWorker } from './wagering/infrastructure/workers/outbox-publisher.worker.js';
 
 @Module({
   imports: [MikroOrmModule.forRoot(mikroOrmConfig)],
@@ -49,6 +51,16 @@ import { WagerTransactionProducer } from './wagering/infrastructure/messaging/wa
       inject: [EntityManager],
       useFactory: (entityManager: EntityManager) =>
         new PendingReferenceWorker(entityManager),
+    },
+    {
+      provide: OutboxPublisherWorker,
+      inject: [EntityManager, SQSClient],
+      useFactory: (entityManager: EntityManager, sqsClient: SQSClient) =>
+        new OutboxPublisherWorker(
+          entityManager,
+          sqsClient,
+          getWagerEventsQueueUrl(),
+        ),
     },
   ],
 })

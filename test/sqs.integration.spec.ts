@@ -40,6 +40,7 @@ import {
 } from '../src/wagering/infrastructure/messaging/wager-transaction.consumer.js';
 import { WagerTransactionProducer } from '../src/wagering/infrastructure/messaging/wager-transaction.producer.js';
 import { InboxMessageOrmEntity } from '../src/wagering/infrastructure/persistence/entities/inbox-message.orm-entity.js';
+import { OutboxMessageOrmEntity } from '../src/wagering/infrastructure/persistence/entities/outbox-message.orm-entity.js';
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
@@ -130,22 +131,48 @@ async function receiveOne(queueUrl: string, waitTimeSeconds = 0) {
 
 async function persistedFinancialState() {
   const entityManager = orm.em.fork();
-  const [wallet, wagerTransactions, ledgerEntries, inboxMessages] =
-    await Promise.all([
-      entityManager.findOne(WalletOrmEntity, WALLET_ID),
-      entityManager.find(WagerTransactionOrmEntity, {
-        walletId: WALLET_ID,
-        kind: WagerTransactionKind.Bet,
-      }),
-      entityManager.find(WalletLedgerEntryOrmEntity, {
-        walletId: WALLET_ID,
-      }),
-      entityManager.find(InboxMessageOrmEntity, {
-        consumerName: WAGER_TRANSACTION_CONSUMER_NAME,
-      }),
-    ]);
+  const [
+    wallet,
+    wagerTransactions,
+    ledgerEntries,
+    inboxMessages,
+    outboxMessages,
+  ] = await Promise.all([
+    entityManager.findOne(WalletOrmEntity, WALLET_ID),
+    entityManager.find(WagerTransactionOrmEntity, {
+      walletId: WALLET_ID,
+      kind: WagerTransactionKind.Bet,
+    }),
+    entityManager.find(WalletLedgerEntryOrmEntity, {
+      walletId: WALLET_ID,
+    }),
+    entityManager.find(InboxMessageOrmEntity, {
+      consumerName: WAGER_TRANSACTION_CONSUMER_NAME,
+    }),
+    entityManager.find(OutboxMessageOrmEntity, {}),
+  ]);
 
-  return { wallet, wagerTransactions, ledgerEntries, inboxMessages };
+  return {
+    wallet,
+    wagerTransactions,
+    ledgerEntries,
+    inboxMessages,
+    outboxMessages,
+  };
+}
+
+function wagerOutboxCount(
+  state: Awaited<ReturnType<typeof persistedFinancialState>>,
+) {
+  const transactionIds = new Set(
+    state.wagerTransactions.map((transaction) => transaction.id),
+  );
+
+  return state.outboxMessages.filter((message) =>
+    transactionIds.has(
+      (message.payload.data as { transactionId?: string }).transactionId ?? '',
+    ),
+  ).length;
 }
 
 describe('LocalStack SQS wagering flow with persistent Inbox', () => {
@@ -232,6 +259,7 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
     expect(state.wagerTransactions).toHaveLength(1);
     expect(debitEntries).toHaveLength(1);
     expect(debitEntries[0]?.amount).toBe('25.00');
+    expect(wagerOutboxCount(state)).toBe(2);
     expect(remainingMessages.Messages).toBeUndefined();
     expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
   });
@@ -256,6 +284,7 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
     expect(state.wallet?.balance).toBe('100.00');
     expect(state.wagerTransactions).toHaveLength(1);
     expect(debitEntries).toHaveLength(0);
+    expect(wagerOutboxCount(state)).toBe(1);
     expect(remainingMessages.Messages).toBeUndefined();
     expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
   });
@@ -292,6 +321,7 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
     expect(state.wallet?.balance).toBe('100.00');
     expect(state.wagerTransactions).toHaveLength(0);
     expect(debitEntries).toHaveLength(0);
+    expect(wagerOutboxCount(state)).toBe(0);
     expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
   });
 
@@ -346,6 +376,7 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
     expect(finalState.wagerTransactions).toHaveLength(1);
     expect(finalState.inboxMessages).toHaveLength(1);
     expect(debitEntries).toHaveLength(1);
+    expect(wagerOutboxCount(finalState)).toBe(2);
     expect(remainingMessages.Messages).toBeUndefined();
     expectWalletBalanceMatchesLedger(
       finalState.wallet,

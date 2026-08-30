@@ -183,9 +183,10 @@ O Compose executa LocalStack com somente o serviço SQS. O init hook
 
 - `wager-transactions.fifo`, fila principal FIFO;
 - `wager-transactions-dlq.fifo`, dead-letter queue FIFO;
+- `wager-events.fifo`, fila FIFO de eventos de integração;
 - redrive da principal para a DLQ após 3 recebimentos sem ACK.
 
-Ambas usam content-based deduplication. O producer envia o contrato de
+As três filas usam content-based deduplication. O producer envia o contrato de
 `ProcessWagerTransactionInput` como JSON e usa `walletId` como `MessageGroupId`,
 preservando a ordem das mensagens da mesma wallet.
 
@@ -257,6 +258,56 @@ Falhas anteriores à criação de uma transação válida continuam como erros d
 aplicação: wallet inexistente, player incompatível, referência obrigatória ausente,
 `OPENING` externo e conflito de idempotência.
 
+## Transactional Outbox
+
+Cada resultado financeiro produz eventos concretos com envelope versionado. O
+payload gravado é JSON e valores monetários são sempre `{ amount: string,
+currency: string }`; nenhuma instância de `Money` atravessa o contrato de
+integração.
+
+| Evento | Condição |
+| --- | --- |
+| `WagerTransactionProcessed` | transação aplicada, incluindo `OPENING` e `LOSS` |
+| `WagerTransactionRejected` | rejeição de negócio persistida |
+| `WalletBalanceChanged` | existe ledger e o saldo realmente mudou |
+| `WagerTransactionPendingReference` | entrada inicial em `PENDING_REFERENCE` |
+
+Replay idempotente não cria novos eventos. Uma pendência que posteriormente chega
+a um estado terminal cria o evento terminal correspondente; tentativas que apenas
+reagendam a referência não criam outro evento pendente.
+
+A inserção em `outbox_messages` usa o mesmo `EntityManager` que persiste
+`WagerTransaction`, Wallet e ledger. No consumo SQS, esse EntityManager pertence à
+transação raiz que também contém a Inbox:
+
+```text
+BEGIN
+  insere/consulta Inbox
+  processa e bloqueia Wallet
+  persiste WagerTransaction e ledger
+  persiste Outbox
+  marca Inbox processada
+COMMIT
+
+consumer faz ACK do comando SQS
+publisher independente envia a Outbox confirmada
+```
+
+Assim, um rollback anterior ao commit remove Inbox, efeito financeiro e Outbox. O
+evento nunca é enviado de dentro dessa transação de negócio.
+
+`OutboxPublisherWorker` busca uma entrada vencida por vez com
+`PESSIMISTIC_PARTIAL_WRITE` (`FOR UPDATE SKIP LOCKED`). O lock fica aberto durante
+o envio e impede publishers concorrentes de selecionar a mesma linha. Após sucesso,
+o worker preenche `published_at`; em falha do SQS, incrementa `attempts` e define
+`next_attempt_at` com backoff exponencial de 1 segundo, limitado a 60 segundos.
+
+Cada mensagem usa `aggregateId` como `MessageGroupId` e `eventId` como
+`MessageDeduplicationId`. O protocolo continua sendo at-least-once: se o SQS aceitar
+o envio e o processo morrer antes de confirmar `published_at`, a linha será
+publicada novamente. A deduplicação FIFO reduz duplicatas próximas, mas consumidores
+devem deduplicar por `eventId`, inclusive fora da janela do SQS.
+
 ## Garantias e limites atuais
 
 Implementado e verificado em PostgreSQL e LocalStack reais:
@@ -270,6 +321,8 @@ Implementado e verificado em PostgreSQL e LocalStack reais:
 - reconstrução do saldo pelo ledger nas fixtures financeiras;
 - criação das filas FIFO, redrive, envio e consumo;
 - Inbox atômica com o efeito financeiro e redelivery após falha de ACK;
+- Outbox atômica, quatro eventos versionados, retry exponencial e publishers
+  concorrentes com `SKIP LOCKED`;
 - rejeição terminal com ACK e falhas repetidas encaminhadas à DLQ.
 
 Limitações conhecidas do checkpoint atual:
@@ -279,7 +332,11 @@ Limitações conhecidas do checkpoint atual:
   instâncias depende do lock e da revalidação transacional;
 - a política de retry é fixa em código, sem configuração operacional ou jitter;
 - o SQS está integrado apenas ao LocalStack; não há configuração de deploy AWS;
-- não há Outbox, extensão dinâmica de visibility timeout ou processamento da DLQ;
+- não há extensão dinâmica de visibility timeout ou processamento da DLQ;
+- o publisher da Outbox mantém uma transação PostgreSQL curta aberta durante cada
+  envio ao SQS; isso simplifica a reserva concorrente no checkpoint atual;
+- a entrega de eventos é at-least-once e depende de deduplicação por `eventId` no
+  consumidor; ainda não existe consumer dos eventos neste projeto;
 - o consumer atual processa uma mensagem por polling e não possui observabilidade avançada;
 - não há teste distribuído entre processos/hosts: a concorrência atual usa conexões
   PostgreSQL e `EntityManager.fork()` independentes no mesmo processo de teste.

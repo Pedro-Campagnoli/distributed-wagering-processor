@@ -12,6 +12,7 @@ import { Wallet } from '../../domain/wallet.js';
 import { MikroOrmWagerTransactionRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wager-transaction.repository.js';
 import { MikroOrmWalletLedgerEntryRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet-ledger-entry.repository.js';
 import { MikroOrmWalletRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
+import { enqueueWagerIntegrationEvents } from '../services/enqueue-wager-integration-events.js';
 
 export interface OpenWalletInput {
   playerId: string;
@@ -76,6 +77,12 @@ export class OpenWalletUseCase {
         });
 
         await walletLedgerEntryRepository.insert(ledgerEntry);
+
+        await enqueueWagerIntegrationEvents(transactionalEntityManager, {
+          transaction: opening,
+          wallet,
+          ledgerEntry,
+        });
 
         return wallet;
       },

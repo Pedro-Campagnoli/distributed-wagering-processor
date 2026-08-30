@@ -39,3 +39,14 @@ export function getWagerDlqUrl(): string {
     `${endpoint}/queue/${region}/${DEFAULT_ACCOUNT_ID}/wager-transactions-dlq.fifo`
   );
 }
+
+export function getWagerEventsQueueUrl(): string {
+  const endpoint = process.env.SQS_ENDPOINT ?? DEFAULT_ENDPOINT;
+  const region =
+    process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? DEFAULT_REGION;
+
+  return (
+    process.env.SQS_WAGER_EVENTS_QUEUE_URL ??
+    `${endpoint}/queue/${region}/${DEFAULT_ACCOUNT_ID}/wager-events.fifo`
+  );
+}
