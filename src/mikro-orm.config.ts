@@ -1,5 +1,8 @@
 import { Migrator } from '@mikro-orm/migrations';
 import { defineConfig } from '@mikro-orm/postgresql';
+import { WalletOrmEntity } from './wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
+import { WagerTransactionOrmEntity } from './wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
+import { WalletLedgerEntryOrmEntity } from './wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 
 export default defineConfig({
   host: process.env.POSTGRES_HOST ?? 'localhost',
@@ -7,6 +10,12 @@ export default defineConfig({
   user: process.env.POSTGRES_USER ?? 'postgres',
   password: process.env.POSTGRES_PASSWORD ?? 'postgres',
   dbName: process.env.POSTGRES_DB ?? 'wagering',
+
+  entities: [
+    WalletOrmEntity,
+    WagerTransactionOrmEntity,
+    WalletLedgerEntryOrmEntity,
+  ],
 
   discovery: {
     warnWhenNoEntities: false,

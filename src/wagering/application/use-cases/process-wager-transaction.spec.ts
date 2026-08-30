@@ -33,6 +33,7 @@ const createWallet = (balance: string = '100.00') =>
 const createWalletRepository = (wallet: Wallet | undefined): WalletRepository =>
   ({
     findById: async () => wallet,
+    update: async () => undefined,
     findByPlayerAndCurrency: async () => undefined,
     insert: async () => undefined,
   }) as WalletRepository;
