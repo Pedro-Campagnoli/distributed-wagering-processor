@@ -6,11 +6,15 @@ import { Money } from '../../domain/money.js';
 import {
   WagerTransaction,
   WagerTransactionKind,
+  WagerTransactionStatus,
 } from '../../domain/wager-transaction.js';
 import {
+  DuplicateRefundError,
+  DuplicateRollbackError,
   ExternalOpeningTransactionError,
   IdempotencyConflictError,
   InsufficientBalanceError,
+  TransactionReferenceNotFoundError,
   WalletNotFoundError,
   WalletPlayerMismatchError,
 } from '@/wagering/domain/errors.js';
@@ -129,7 +133,42 @@ export class ProcessWagerTransactionUseCase {
         referenceExternalTransactionId: input.referenceExternalTransactionId,
       });
 
-      const result = this.processTransaction(wallet, transaction);
+      let reference: WagerTransaction | undefined;
+
+      if (transaction.requiresReference()) {
+        reference =
+          await wagerTransactionRepository.findByProviderAndExternalTransactionId(
+            transaction.providerId,
+            transaction.referenceExternalTransactionId!,
+          );
+
+        if (!reference) {
+          throw new TransactionReferenceNotFoundError(
+            transaction.referenceExternalTransactionId!,
+          );
+        }
+
+        const previousReversal =
+          await wagerTransactionRepository.findByProviderKindAndReferenceExternalTransactionId(
+            transaction.providerId,
+            transaction.kind,
+            transaction.referenceExternalTransactionId!,
+          );
+
+        if (previousReversal) {
+          if (transaction.kind === WagerTransactionKind.Refund) {
+            throw new DuplicateRefundError(
+              transaction.referenceExternalTransactionId!,
+            );
+          }
+
+          throw new DuplicateRollbackError(
+            transaction.referenceExternalTransactionId!,
+          );
+        }
+      }
+
+      const result = this.processTransaction(wallet, transaction, reference);
       const observedBalance = result.wallet.balance;
 
       result.transaction.recordObservedBalance(observedBalance);
@@ -151,6 +190,7 @@ export class ProcessWagerTransactionUseCase {
   private processTransaction(
     wallet: Wallet,
     transaction: WagerTransaction,
+    reference?: WagerTransaction,
   ): ProcessedWagerTransaction {
     switch (transaction.kind) {
       case WagerTransactionKind.Bet:
@@ -162,11 +202,161 @@ export class ProcessWagerTransactionUseCase {
       case WagerTransactionKind.Loss:
         return this.processLoss(wallet, transaction);
 
+      case WagerTransactionKind.Refund:
+        return this.processRefund(wallet, transaction, reference!);
+
+      case WagerTransactionKind.Rollback:
+        return this.processRollback(wallet, transaction, reference!);
+
       default:
         return {
           transaction,
           wallet,
         };
+    }
+  }
+
+  private processRefund(
+    wallet: Wallet,
+    transaction: WagerTransaction,
+    reference: WagerTransaction,
+  ): ProcessedWagerTransaction {
+    const failureCode = this.reversalFailureCode(transaction, reference);
+
+    if (failureCode) {
+      transaction.reject(failureCode);
+
+      return {
+        transaction,
+        wallet,
+      };
+    }
+
+    const balanceChange = wallet.credit(transaction.money);
+
+    if (!balanceChange) {
+      transaction.reject('INVALID_AMOUNT');
+
+      return {
+        transaction,
+        wallet,
+      };
+    }
+
+    transaction.markProcessed(reference.id, new Date());
+
+    const ledgerEntry = WalletLedgerEntry.create({
+      id: this.idGenerator(),
+      walletId: wallet.id,
+      transactionId: transaction.id,
+      direction: transaction.ledgerDirectionFor(reference),
+      money: transaction.money,
+      balanceBefore: balanceChange.balanceBefore,
+      balanceAfter: balanceChange.balanceAfter,
+    });
+
+    return {
+      transaction,
+      wallet,
+      ledgerEntry,
+    };
+  }
+
+  private processRollback(
+    wallet: Wallet,
+    transaction: WagerTransaction,
+    reference: WagerTransaction,
+  ): ProcessedWagerTransaction {
+    const failureCode = this.reversalFailureCode(transaction, reference);
+
+    if (failureCode) {
+      transaction.reject(failureCode);
+
+      return {
+        transaction,
+        wallet,
+      };
+    }
+
+    try {
+      const balanceChange =
+        reference.kind === WagerTransactionKind.Bet
+          ? wallet.credit(transaction.money)
+          : wallet.debit(transaction.money);
+
+      if (!balanceChange) {
+        transaction.reject('INVALID_AMOUNT');
+
+        return {
+          transaction,
+          wallet,
+        };
+      }
+
+      transaction.markProcessed(reference.id, new Date());
+
+      const ledgerEntry = WalletLedgerEntry.create({
+        id: this.idGenerator(),
+        walletId: wallet.id,
+        transactionId: transaction.id,
+        direction: transaction.ledgerDirectionFor(reference),
+        money: transaction.money,
+        balanceBefore: balanceChange.balanceBefore,
+        balanceAfter: balanceChange.balanceAfter,
+      });
+
+      return {
+        transaction,
+        wallet,
+        ledgerEntry,
+      };
+    } catch (error) {
+      if (error instanceof InsufficientBalanceError) {
+        transaction.reject('ROLLBACK_INSUFFICIENT_BALANCE');
+
+        return {
+          transaction,
+          wallet,
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  private reversalFailureCode(
+    transaction: WagerTransaction,
+    reference: WagerTransaction,
+  ): string | undefined {
+    const isValidRefundReference =
+      transaction.kind === WagerTransactionKind.Refund &&
+      reference.kind === WagerTransactionKind.Bet;
+    const isValidRollbackReference =
+      transaction.kind === WagerTransactionKind.Rollback &&
+      (reference.kind === WagerTransactionKind.Bet ||
+        reference.kind === WagerTransactionKind.Win ||
+        reference.kind === WagerTransactionKind.Refund);
+
+    if (!isValidRefundReference && !isValidRollbackReference) {
+      return 'INVALID_REFERENCE_KIND';
+    }
+
+    if (reference.status !== WagerTransactionStatus.Processed) {
+      return 'REFERENCE_NOT_PROCESSED';
+    }
+
+    if (
+      reference.providerId !== transaction.providerId ||
+      reference.playerId !== transaction.playerId ||
+      reference.walletId !== transaction.walletId ||
+      reference.money.currency !== transaction.money.currency ||
+      reference.roundId !== transaction.roundId
+    ) {
+      return 'REFERENCE_DATA_MISMATCH';
+    }
+
+    if (!reference.money.equals(transaction.money)) {
+      return 'REFERENCE_AMOUNT_MISMATCH';
     }
   }
 
