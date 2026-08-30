@@ -14,3 +14,7 @@
 ## Database
 
 - [Database constraints](./database/database-constraints.md)
+
+## HTTP
+
+- [Wallets](./http/wallets.md)
