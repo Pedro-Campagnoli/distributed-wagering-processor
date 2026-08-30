@@ -1,7 +1,7 @@
 # Testing Strategy
 
-`bun test` executa toda a suíte, incluindo os testes de integração com PostgreSQL.
-Antes de executar, suba o banco e aplique as migrations:
+`bun test` executa toda a suíte, incluindo os testes de integração com PostgreSQL e
+LocalStack. Antes de executar, suba os serviços e aplique as migrations:
 
 ```bash
 bun run docker:up
@@ -9,8 +9,8 @@ bunx mikro-orm migration:up
 bun test
 ```
 
-Não existem variáveis de ambiente para habilitar essas suítes. Se o PostgreSQL
-estiver indisponível, o comando falha explicitamente.
+Não existem variáveis de ambiente para habilitar essas suítes. Se PostgreSQL ou
+LocalStack estiverem indisponíveis, o comando falha explicitamente.
 
 ## Domain
 

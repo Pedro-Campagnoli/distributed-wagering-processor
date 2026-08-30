@@ -176,6 +176,30 @@ instância atrasada não incrementa attempts nem reaplica um efeito já concluí
 A migration de hardening preenche `next_reference_retry_at` de pendências antigas
 que estejam com `NULL`, e possui operação reversa.
 
+## SQS local
+
+O Compose executa LocalStack com somente o serviço SQS. O init hook
+`docker/localstack/init-sqs.sh` cria:
+
+- `wager-transactions.fifo`, fila principal FIFO;
+- `wager-transactions-dlq.fifo`, dead-letter queue FIFO;
+- redrive da principal para a DLQ após 3 recebimentos sem ACK.
+
+Ambas usam content-based deduplication. O producer envia o contrato de
+`ProcessWagerTransactionInput` como JSON e usa `walletId` como `MessageGroupId`,
+preservando a ordem das mensagens da mesma wallet.
+
+O consumer recebe uma mensagem por vez, converte o valor recebido para `Money` e
+chama uma nova instância de `ProcessWagerTransactionUseCase` com
+`EntityManager.fork()`. Ele não contém regras de saldo, reversão ou idempotência.
+`DeleteMessage` é enviado somente depois que o use case termina com sucesso. Se o
+parse ou o processamento lançar erro, a mensagem permanece sem ACK e volta a ficar
+visível para nova tentativa; após o limite do redrive, o SQS a move para a DLQ.
+
+Endpoint, região, credenciais locais e URLs das filas vêm de variáveis de ambiente.
+As credenciais `test/test` são fictícias e o endpoint aponta para o LocalStack; não
+é necessária uma conta AWS.
+
 ## Failure codes
 
 Rejeições esperadas são persistidas na `WagerTransaction` e não alteram saldo nem
@@ -201,7 +225,7 @@ aplicação: wallet inexistente, player incompatível, referência obrigatória 
 
 ## Garantias e limites atuais
 
-Implementado e verificado em PostgreSQL real:
+Implementado e verificado em PostgreSQL e LocalStack reais:
 
 - precisão monetária e constraints financeiras;
 - atomicidade wallet/transação/ledger;
@@ -209,15 +233,17 @@ Implementado e verificado em PostgreSQL real:
 - replay idempotente e concorrência de 50 chamadas;
 - unicidade de reversões efetivamente processadas;
 - retry concorrente de referências pendentes;
-- reconstrução do saldo pelo ledger nas fixtures financeiras.
+- reconstrução do saldo pelo ledger nas fixtures financeiras;
+- criação das filas FIFO, redrive, envio, consumo e ACK após uma BET processada.
 
-Limitações conhecidas antes da etapa de mensageria:
+Limitações conhecidas do checkpoint atual:
 
 - o lock serializa por wallet, podendo limitar throughput em wallets muito ativas;
 - o worker usa polling local e não reserva lotes antes da execução; a correção entre
   instâncias depende do lock e da revalidação transacional;
 - a política de retry é fixa em código, sem configuração operacional ou jitter;
-- não há endpoint/consumer para ingestão de wager transactions;
-- SQS, Inbox, Outbox, DLQ e observabilidade ainda não estão implementados;
+- o SQS está integrado apenas ao LocalStack; não há configuração de deploy AWS;
+- não há Inbox ou Outbox, extensão de visibility timeout ou processamento da DLQ;
+- o consumer atual processa uma mensagem por polling e não possui observabilidade avançada;
 - não há teste distribuído entre processos/hosts: a concorrência atual usa conexões
   PostgreSQL e `EntityManager.fork()` independentes no mesmo processo de teste.

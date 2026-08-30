@@ -5,7 +5,7 @@ MikroORM, PostgreSQL e Bun.
 
 O checkpoint atual cobre abertura de wallet, processamento financeiro atômico,
 concorrência por wallet, idempotência, `REFUND`, `ROLLBACK` e reprocessamento de
-referências pendentes. A descrição das decisões está em
+referências pendentes, além de producer/consumer SQS local. A descrição das decisões está em
 [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Requisitos
@@ -13,8 +13,9 @@ referências pendentes. A descrição das decisões está em
 - Bun;
 - Docker com Docker Compose.
 
-Os testes de integração usam PostgreSQL real. O banco precisa estar disponível;
-a suíte não é ocultada por variáveis de ambiente nem substituída por mocks.
+Os testes de integração usam PostgreSQL e LocalStack reais. Os dois serviços precisam
+estar disponíveis; a suíte não é ocultada por variáveis de ambiente nem substituída
+por mocks.
 
 ## Setup
 
@@ -29,10 +30,10 @@ bunx mikro-orm migration:up
 
 ```bash
 bun run start:dev   # aplicação em modo de desenvolvimento
-bun test            # suíte completa, incluindo PostgreSQL
+bun test            # suíte completa, incluindo PostgreSQL e LocalStack
 bun run build       # compilação NestJS/TypeScript
 bun run lint        # análise estática
-bun run docker:down # encerra o PostgreSQL
+bun run docker:down # encerra PostgreSQL e LocalStack
 ```
 
 Os scripts `test:money`, `test:wallet`, `test:ledger`, `test:wager`,
@@ -51,16 +52,18 @@ Implementado:
 - idempotência persistente e replay com `observedBalance`;
 - processamento de `BET`, `WIN`, `LOSS`, `REFUND` e `ROLLBACK`;
 - `PENDING_REFERENCE` e worker local com retry exponencial;
-- testes unitários, HTTP, integração, migrations e concorrência em PostgreSQL.
+- filas FIFO locais `wager-transactions.fifo` e `wager-transactions-dlq.fifo`;
+- producer e consumer com AWS SDK, redrive para DLQ e ACK após o use case;
+- testes unitários, HTTP, integração, migrations e concorrência em PostgreSQL e LocalStack.
 
 Ainda pendente:
 
-- ingestão de wager transactions por endpoint ou consumidor;
-- SQS, Inbox, Outbox e DLQ como fluxos funcionais;
+- endpoint HTTP de ingestão de wager transactions;
+- Inbox e Outbox;
+- processamento da DLQ e integração com uma conta AWS real;
 - observabilidade e operação distribuída da mensageria.
 
-As tabelas de Inbox/Outbox presentes no schema não significam que o fluxo de
-mensageria esteja implementado.
+As tabelas de Inbox/Outbox presentes no schema ainda não participam do fluxo SQS.
 
 ## Documentação
 
