@@ -21,6 +21,7 @@
     "test:ledger": "bun test src/shared/domain/wallet-ledger-entry.spec.ts",
     "test:wager": "bun test src/shared/domain/wager-transaction.spec.ts",
     "test:database": "RUN_DATABASE_TESTS=1 bun test test/database-constraints.spec.ts",
+    "test:repositories": "RUN_REPOSITORY_TESTS=1 bun test test/repositories.spec.ts",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
