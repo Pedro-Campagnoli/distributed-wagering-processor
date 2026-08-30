@@ -9,6 +9,7 @@ import {
 } from '../../domain/wager-transaction.js';
 import {
   ExternalOpeningTransactionError,
+  IdempotencyConflictError,
   InsufficientBalanceError,
   WalletNotFoundError,
   WalletPlayerMismatchError,
@@ -62,6 +63,34 @@ export class ProcessWagerTransactionUseCase {
       const walletLedgerEntryRepository =
         new MikroOrmWalletLedgerEntryRepository(tx);
 
+      const wallet = await walletRepository.findById(input.walletId, {
+        lock: true,
+      });
+
+      if (!wallet) {
+        throw new WalletNotFoundError(input.walletId);
+      }
+
+      if (wallet.playerId !== input.playerId) {
+        throw new WalletPlayerMismatchError();
+      }
+
+      const existingTransaction =
+        await wagerTransactionRepository.findByIdempotencyKey(
+          input.idempotencyKey,
+        );
+
+      if (existingTransaction) {
+        if (!existingTransaction.matchesPayload(input.payloadHash)) {
+          throw new IdempotencyConflictError(input.idempotencyKey);
+        }
+
+        return {
+          transaction: existingTransaction,
+          wallet,
+        };
+      }
+
       const transaction = WagerTransaction.create({
         id: this.idGenerator(),
         providerId: input.providerId,
@@ -76,18 +105,6 @@ export class ProcessWagerTransactionUseCase {
         money: input.money,
         referenceExternalTransactionId: input.referenceExternalTransactionId,
       });
-
-      const wallet = await walletRepository.findById(input.walletId, {
-        lock: true,
-      });
-
-      if (!wallet) {
-        throw new WalletNotFoundError(input.walletId);
-      }
-
-      if (wallet.playerId !== input.playerId) {
-        throw new WalletPlayerMismatchError();
-      }
 
       const result = this.processTransaction(wallet, transaction);
 

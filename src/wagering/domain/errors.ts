@@ -82,3 +82,10 @@ export class WalletPlayerMismatchError extends Error {
     this.name = 'WalletPlayerMismatchError';
   }
 }
+
+export class IdempotencyConflictError extends Error {
+  constructor(idempotencyKey: string) {
+    super(`Idempotency key reused with different payload: ${idempotencyKey}`);
+    this.name = 'IdempotencyConflictError';
+  }
+}
