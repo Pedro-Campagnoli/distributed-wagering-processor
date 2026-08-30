@@ -8,7 +8,6 @@ import {
 } from 'bun:test';
 import { MikroORM } from '@mikro-orm/postgresql';
 
-import mikroOrmConfig from '../mikro-orm.config.js';
 import { Money } from '../src/shared/domain/money.js';
 import {
   LedgerDirection,
@@ -25,6 +24,7 @@ import { Wallet, type WalletState } from '../src/shared/domain/wallet.js';
 import { MikroOrmWagerTransactionRepository } from '../src/shared/infrastructure/persistence/mikro-orm-wager-transaction.repository.js';
 import { MikroOrmWalletLedgerEntryRepository } from '../src/shared/infrastructure/persistence/mikro-orm-wallet-ledger-entry.repository.js';
 import { MikroOrmWalletRepository } from '../src/shared/infrastructure/persistence/mikro-orm-wallet.repository.js';
+import mikroOrmConfig from '@/mikro-orm.config.js';
 
 const REPOSITORY_TESTS_ENABLED = process.env.RUN_REPOSITORY_TESTS === '1';
 const describeRepositories = REPOSITORY_TESTS_ENABLED

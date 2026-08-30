@@ -7,8 +7,7 @@ import {
   it,
 } from 'bun:test';
 import { MikroORM } from '@mikro-orm/postgresql';
-
-import mikroOrmConfig from '../mikro-orm.config.js';
+import mikroOrmConfig from '@/mikro-orm.config.js';
 
 const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
 const describeDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;

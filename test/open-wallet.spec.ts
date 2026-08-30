@@ -8,7 +8,6 @@ import {
 } from 'bun:test';
 import { MikroORM } from '@mikro-orm/postgresql';
 
-import mikroOrmConfig from '../mikro-orm.config.js';
 import { OpenWalletUseCase } from '../src/shared/application/use-cases/open-wallet.use-case.js';
 import { Money } from '../src/shared/domain/money.js';
 import {
@@ -24,6 +23,7 @@ import { Wallet } from '../src/shared/domain/wallet.js';
 import { MikroOrmWagerTransactionRepository } from '../src/shared/infrastructure/persistence/mikro-orm-wager-transaction.repository.js';
 import { MikroOrmWalletLedgerEntryRepository } from '../src/shared/infrastructure/persistence/mikro-orm-wallet-ledger-entry.repository.js';
 import { MikroOrmWalletRepository } from '../src/shared/infrastructure/persistence/mikro-orm-wallet.repository.js';
+import mikroOrmConfig from '@/mikro-orm.config.js';
 
 const OPEN_WALLET_TESTS_ENABLED = process.env.RUN_OPEN_WALLET_TESTS === '1';
 const describeOpenWallet = OPEN_WALLET_TESTS_ENABLED ? describe : describe.skip;
