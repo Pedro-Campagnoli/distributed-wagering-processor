@@ -77,7 +77,9 @@ export class ProcessWagerTransactionUseCase {
         referenceExternalTransactionId: input.referenceExternalTransactionId,
       });
 
-      const wallet = await walletRepository.findById(input.walletId);
+      const wallet = await walletRepository.findById(input.walletId, {
+        lock: true,
+      });
 
       if (!wallet) {
         throw new WalletNotFoundError(input.walletId);
