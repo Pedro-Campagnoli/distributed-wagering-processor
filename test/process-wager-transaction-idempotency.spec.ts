@@ -26,9 +26,6 @@ import {
   openWalletFixture,
 } from './support/financial-fixture.js';
 
-const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
-const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
-
 const WALLET_ID = '00000000-0000-4000-8000-000000001101';
 const PLAYER_ID = '00000000-0000-4000-8000-000000001102';
 const TRANSACTION_ID = '00000000-0000-4000-8000-000000001103';
@@ -96,7 +93,7 @@ async function persistedState() {
   };
 }
 
-describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
+describe('ProcessWagerTransactionUseCase idempotency', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
   });

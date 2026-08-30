@@ -24,17 +24,17 @@ Os casos de rejeição verificam tanto a falha da operação quanto o nome da co
 
 ## Execution
 
-A suíte é opt-in porque depende do PostgreSQL e das migrations aplicadas.
+A suíte faz parte de `bun test` e depende do PostgreSQL real com as migrations
+aplicadas.
 
 ```bash
 bun run docker:up
 bunx mikro-orm migration:up
-bun run test:database
+bun test
 ```
 
-O script `test:database` define `RUN_DATABASE_TESTS=1` e executa apenas `test/database-constraints.spec.ts`.
-
-Quando essa variável não está definida, a suíte permanece ignorada pelo `bun test` padrão para que os testes unitários de domínio continuem independentes do banco.
+`bun run test:database` permanece disponível apenas como atalho para executar
+esse arquivo isoladamente.
 
 ---
 
@@ -104,13 +104,13 @@ A `idempotency_key` é globalmente única na tabela.
 
 A identidade externa da operação também é protegida pela combinação única de `provider_id` e `external_transaction_id`.
 
-Essas constraints impedem duplicações persistentes mesmo quando múltiplas instâncias tentam gravar a mesma identidade. A suíte atual valida as constraints por inserções sequenciais; os cenários concorrentes permanecem cobertos por testes futuros específicos.
+Essas constraints impedem duplicações persistentes mesmo quando múltiplas instâncias tentam gravar a mesma identidade. Além das inserções sequenciais desta suíte, a concorrência idempotente é validada com 50 execuções paralelas em PostgreSQL.
 
 ### References and reversals
 
 `REFUND` e `ROLLBACK` exigem uma referência externa. O status `PENDING_REFERENCE` também fica restrito a esses dois tipos.
 
-Um índice único parcial impede que o mesmo provider registre mais de um `REFUND` ou mais de um `ROLLBACK` para a mesma referência.
+Um índice único parcial impede que o mesmo provider registre mais de um `REFUND PROCESSED` ou mais de um `ROLLBACK PROCESSED` para a mesma referência. Reversões rejeitadas permanecem auditáveis e não bloqueiam uma tentativa corrigida.
 
 ---
 
@@ -159,7 +159,7 @@ O contador pode começar em zero e aumentar conforme novas tentativas de publica
 
 Esta suíte comprova que o PostgreSQL aplica as invariantes cobertas mesmo quando as escritas são executadas diretamente por SQL.
 
-Ela não valida ainda:
+Ela não valida isoladamente:
 
 - repositories;
 - atomicidade dos use cases;
@@ -169,4 +169,4 @@ Ela não valida ainda:
 - consumo, retry e DLQ do SQS;
 - endpoints HTTP.
 
-Esses comportamentos exigem testes de integração e concorrência próprios nas etapas futuras do projeto.
+Atomicidade, lock e concorrência são cobertos pelas suítes de integração específicas. Mensageria e SQS continuam fora do escopo implementado.

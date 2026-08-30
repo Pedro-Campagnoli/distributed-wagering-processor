@@ -111,7 +111,7 @@ A operação:
 - registra um `failureCode`;
 - não preenche `processedAt`.
 
-Exemplos futuros incluem saldo insuficiente ou uma reversão inválida.
+Exemplos atuais incluem saldo insuficiente, moeda incompatível e reversões inválidas ou duplicadas.
 
 ### Failed
 
@@ -123,7 +123,7 @@ A operação:
 - registra um `failureCode`;
 - não preenche `processedAt`.
 
-`FailureCode` permanece atualmente como uma string para que a taxonomia definitiva seja introduzida junto às regras de processamento que realmente utilizarem esses códigos.
+`FailureCode` permanece uma string. Os códigos atualmente produzidos pelo fluxo de processamento estão documentados em `ARCHITECTURE.md`.
 
 ## Terminal states
 
@@ -174,7 +174,7 @@ ROLLBACK → true
 
 Compara o `payloadHash` recebido com o hash armazenado na transação.
 
-Esse comportamento será utilizado posteriormente durante o tratamento de idempotência para distinguir:
+Esse comportamento é utilizado pelo tratamento de idempotência para distinguir:
 
 ```text
 mesma chave + mesmo payload
@@ -236,7 +236,7 @@ LOSS
 
 `ledgerDirectionFor()` recebe a própria `WagerTransaction` referenciada, e não apenas seu `kind`.
 
-Isso mantém a relação entre as duas operações explícita e permite que outras propriedades da referência sejam utilizadas pelas regras de processamento posteriormente.
+Isso mantém a relação entre as duas operações explícita e permite que as demais propriedades da referência sejam validadas pelo use case.
 
 Os tipos válidos de referência para `ROLLBACK` são:
 
@@ -268,7 +268,7 @@ CREDIT → DEBIT
 
 Quando uma referência válida ainda não foi resolvida, ou quando seu tipo não possui uma direção válida para rollback, `ledgerDirectionFor()` lança `LedgerDirectionUnavailableError`.
 
-A validação completa da transação referenciada — provider, player, wallet, currency, round, status, valor e duplicidade de reversão — pertence ao processamento da operação e será implementada posteriormente.
+A validação completa da transação referenciada — provider, player, wallet, currency, round, status, valor e duplicidade de reversão — pertence ao processamento da operação e está coberta pelos testes de integração de `REFUND` e `ROLLBACK`.
 
 ## Rehydration
 
@@ -345,4 +345,4 @@ A criação direta com `WagerTransaction.create()` continua sendo utilizada no t
 | Rehydration                                                                                                 | Estado persistido completo e reconstrução sem regras de criação | Estado restaurado exatamente como persistido  |
 | Os testes mantêm `WagerTransaction` independente de persistência, repositories, PostgreSQL, SQS e `Wallet`. |
 
-Essas integrações serão verificadas posteriormente nos testes de processamento, persistência e concorrência.
+Essas integrações são verificadas separadamente pelos testes de processamento, persistência e concorrência em PostgreSQL.

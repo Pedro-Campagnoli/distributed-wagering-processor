@@ -26,9 +26,6 @@ import {
   openWalletFixture,
 } from './support/financial-fixture.js';
 
-const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
-const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
-
 const WALLET_ID = '00000000-0000-4000-8000-000000001001';
 const PLAYER_ID = '00000000-0000-4000-8000-000000001002';
 const FIRST_TRANSACTION_ID = '00000000-0000-4000-8000-000000001003';
@@ -70,7 +67,7 @@ function createIdGenerator(...ids: string[]): () => string {
   };
 }
 
-describeWithDatabase('ProcessWagerTransactionUseCase concurrency', () => {
+describe('ProcessWagerTransactionUseCase concurrency', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
   });

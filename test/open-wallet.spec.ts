@@ -38,10 +38,6 @@ import { MikroOrmWalletLedgerEntryRepository } from '../src/wagering/infrastruct
 
 import { MikroOrmWalletRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
 
-const OPEN_WALLET_TESTS_ENABLED = process.env.RUN_OPEN_WALLET_TESTS === '1';
-
-const describeOpenWallet = OPEN_WALLET_TESTS_ENABLED ? describe : describe.skip;
-
 const PLAYER_ID = '00000000-0000-4000-8000-000000000901';
 
 const POSITIVE_WALLET_ID = '00000000-0000-4000-8000-000000000902';
@@ -203,7 +199,7 @@ async function insertExistingLedgerFixture(): Promise<void> {
   em.clear();
 }
 
-describeOpenWallet('OpenWalletUseCase', () => {
+describe('OpenWalletUseCase', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
   });

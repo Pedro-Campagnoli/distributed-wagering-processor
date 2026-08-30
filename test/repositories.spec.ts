@@ -36,12 +36,6 @@ import { MikroOrmWagerTransactionRepository } from '../src/wagering/infrastructu
 import { MikroOrmWalletLedgerEntryRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet-ledger-entry.repository.js';
 import { MikroOrmWalletRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet.repository.js';
 
-const REPOSITORY_TESTS_ENABLED = process.env.RUN_REPOSITORY_TESTS === '1';
-
-const describeRepositories = REPOSITORY_TESTS_ENABLED
-  ? describe
-  : describe.skip;
-
 const WALLET_ID = '00000000-0000-4000-8000-000000000501';
 
 const PLAYER_ID = '00000000-0000-4000-8000-000000000601';
@@ -134,7 +128,7 @@ async function clearDatabase(): Promise<void> {
   });
 }
 
-describeRepositories('PostgreSQL repositories', () => {
+describe('PostgreSQL repositories', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
   });

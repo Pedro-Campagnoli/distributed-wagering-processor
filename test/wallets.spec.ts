@@ -22,13 +22,9 @@ import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/enti
 
 import { GlobalExceptionFilter } from '../src/wagering/presentation/http/filters/global-exception.filter.js';
 
-const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
-
-const describeDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
-
 const PLAYER_ID = 'd81561b6-fd23-4d38-8fbd-5b93fc5ec429';
 
-describeDatabase('POST /wallets', () => {
+describe('POST /wallets', () => {
   let app: INestApplication;
   let orm: MikroORM;
   let em: EntityManager;

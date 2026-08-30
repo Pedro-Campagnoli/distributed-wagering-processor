@@ -16,17 +16,17 @@ Antes de cada teste e ao encerrar a suíte, as cinco tabelas do projeto são lim
 
 ## Execution
 
-A suíte é opt-in porque depende do PostgreSQL e das migrations aplicadas.
+A suíte faz parte de `bun test` e depende do PostgreSQL real com as migrations
+aplicadas.
 
 ```bash
 bun run docker:up
 bunx mikro-orm migration:up
-bun run test:open-wallet
+bun test
 ```
 
-O script `test:open-wallet` define `RUN_OPEN_WALLET_TESTS=1` e executa somente `test/open-wallet.spec.ts`.
-
-Sem essa variável, os testes permanecem ignorados pelo `bun test` padrão para que os testes unitários continuem independentes do banco.
+`bun run test:open-wallet` permanece disponível apenas como atalho para executar
+esse arquivo isoladamente.
 
 ---
 

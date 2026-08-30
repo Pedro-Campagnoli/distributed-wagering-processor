@@ -9,9 +9,6 @@ import {
 import { MikroORM } from '@mikro-orm/postgresql';
 import mikroOrmConfig from '@/mikro-orm.config.js';
 
-const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
-const describeDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
-
 const CREATED_AT = '2020-01-01T00:00:00.000Z';
 const WALLET_ID = '00000000-0000-4000-8000-000000000001';
 const SECOND_WALLET_ID = '00000000-0000-4000-8000-000000000002';
@@ -281,7 +278,7 @@ function insertOutboxMessage(
   );
 }
 
-describeDatabase('PostgreSQL database invariants', () => {
+describe('PostgreSQL database invariants', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
   });

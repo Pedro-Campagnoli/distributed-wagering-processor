@@ -9,10 +9,13 @@ The suite verifies that the HTTP layer correctly delegates wallet creation to `O
 ## Run
 
 ```bash
-bun run test:wallets
+bun run docker:up
+bunx mikro-orm migration:up
+bun test
 ```
 
-The suite is opt-in because it requires a real PostgreSQL instance.
+The suite is part of `bun test` and requires a real PostgreSQL instance.
+`bun run test:wallets` remains available only as a focused shortcut.
 
 ## Coverage
 

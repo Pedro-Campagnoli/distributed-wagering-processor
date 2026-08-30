@@ -1,138 +1,38 @@
 # ProcessWagerTransactionUseCase
 
-`ProcessWagerTransactionUseCase` coordena o processamento de transações de aposta recebidas pelo sistema.
+`ProcessWagerTransactionUseCase` coordena o processamento financeiro de `BET`,
+`WIN`, `LOSS`, `REFUND` e `ROLLBACK`. `OPENING` externo é rejeitado, pois essa
+operação pertence ao fluxo interno de abertura da wallet.
 
-O use case é responsável por validar a wallet associada à transação, criar a `WagerTransaction` e aplicar o comportamento correspondente ao tipo da operação.
+## Cobertura
 
-A implementação é incremental. Neste momento, o fluxo cobre a criação base de transações e o processamento de `BET`.
+Os testes unitários e de integração verificam:
 
-## Transaction creation
+- wallet inexistente e incompatibilidade de player;
+- `BET` processada e rejeitada por saldo insuficiente;
+- `WIN` como crédito e `LOSS` sem efeito financeiro;
+- transação PostgreSQL única e rollback atômico;
+- lock pessimista por wallet;
+- duas BETs concorrentes de `80.00` sobre saldo `100.00`;
+- idempotency key, conflito de payload e replay com `observedBalance`;
+- 50 requisições idênticas executadas em paralelo;
+- validações, efeitos e duplicidade de `REFUND` e `ROLLBACK`;
+- `PENDING_REFERENCE`, backoff e esgotamento de retries;
+- múltiplos workers concorrentes sem duplicar attempts ou efeitos;
+- ausência de saldo/ledger para operações rejeitadas ou pendentes;
+- igualdade entre saldo persistido e saldo reconstruído pelo ledger.
 
-O use case recebe os dados necessários para criar uma `WagerTransaction`, incluindo:
+Os testes de integração usam PostgreSQL real, repositories MikroORM reais e um
+`EntityManager.fork()` independente para cada operação concorrente.
 
-- provider;
-- identificadores externos;
-- idempotency key;
-- payload hash;
-- wallet;
-- player;
-- round;
-- game;
-- tipo da transação;
-- valor monetário;
-- referência externa, quando aplicável.
+## Execução
 
-Transações recebidas externamente são criadas inicialmente pelo domínio através de `WagerTransaction.create()`.
-
-`OPENING` não pode ser submetida externamente.
-
-Essa operação é interna ao sistema e é utilizada durante a abertura de uma wallet.
-
-Os testes verificam:
-
-- criação de uma transação pendente para tipos ainda não processados;
-- rejeição de `OPENING` recebido externamente.
-
-## Wallet validation
-
-Antes de processar uma operação financeira, o use case busca a wallet informada.
-
-A wallet precisa:
-
-- existir;
-- pertencer ao `playerId` informado na transação.
-
-Quando a wallet não existe, o processamento é interrompido com `WalletNotFoundError`.
-
-Quando a wallet pertence a outro player, o processamento é interrompido com `WalletPlayerMismatchError`.
-
-Essas validações impedem que uma transação seja aplicada a uma wallet inexistente ou pertencente a outro jogador.
-
-## BET
-
-Uma operação `BET` representa um débito na wallet.
-
-O fluxo é:
-
-```text
-BET
- ↓
-buscar wallet
- ↓
-validar player
- ↓
-debitar saldo
- ↓
-saldo suficiente?
- ├── sim → PROCESSED + DEBIT ledger
- └── não → REJECTED
+```bash
+bun run docker:up
+bunx mikro-orm migration:up
+bun test
 ```
 
-### BET processed
-
-Quando existe saldo suficiente:
-
-- a wallet é debitada;
-- a `WagerTransaction` é marcada como `PROCESSED`;
-- um `WalletLedgerEntry` é criado;
-- a direção do ledger é `DEBIT`.
-
-Exemplo:
-
-```text
-Balance before: 100.00 BRL
-BET:             25.00 BRL
-Balance after:   75.00 BRL
-```
-
-O ledger registra:
-
-```text
-Direction:       DEBIT
-Balance before:  100.00 BRL
-Amount:           25.00 BRL
-Balance after:    75.00 BRL
-```
-
-Os testes verificam:
-
-- status `PROCESSED`;
-- saldo atualizado corretamente;
-- criação do ledger;
-- direção `DEBIT`;
-- `balanceBefore`;
-- valor da operação;
-- `balanceAfter`.
-
-### Insufficient balance
-
-Quando o saldo da wallet é insuficiente:
-
-- a transação é marcada como `REJECTED`;
-- o saldo da wallet permanece inalterado;
-- nenhum ledger é criado.
-
-Exemplo:
-
-```text
-Balance: 100.00 BRL
-BET:     150.00 BRL
-```
-
-Resultado:
-
-```text
-Transaction: REJECTED
-Wallet:      100.00 BRL
-Ledger:      none
-```
-
-Os testes garantem que uma operação rejeitada não produz efeito financeiro parcial.
-
-## Current scope
-
-O processamento atual ainda ocorre apenas em memória dentro do fluxo da aplicação.
-
-Persistência coordenada, transações SQL e locks concorrentes serão adicionados posteriormente.
-
-A separação atual permite validar as regras do processamento antes da introdução das preocupações de infraestrutura e concorrência.
+A suíte PostgreSQL é executada automaticamente; não existe variável para
+habilitá-la. Consulte [ARCHITECTURE.md](../../../ARCHITECTURE.md) para o fluxo
+transacional, regras de reversão, política de retries e limitações atuais.

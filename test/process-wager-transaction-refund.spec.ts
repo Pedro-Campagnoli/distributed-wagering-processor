@@ -26,9 +26,6 @@ import {
   openWalletFixture,
 } from './support/financial-fixture.js';
 
-const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
-const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
-
 const WALLET_ID = '00000000-0000-4000-8000-000000001201';
 const PLAYER_ID = '00000000-0000-4000-8000-000000001202';
 const PROVIDER_ID = 'provider-refund';
@@ -95,7 +92,7 @@ async function persistedState() {
   };
 }
 
-describeWithDatabase('ProcessWagerTransactionUseCase REFUND', () => {
+describe('ProcessWagerTransactionUseCase REFUND', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
   });

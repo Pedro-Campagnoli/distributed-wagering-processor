@@ -25,9 +25,6 @@ import {
   openWalletFixture,
 } from './support/financial-fixture.js';
 
-const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
-const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
-
 const WALLET_ID = '00000000-0000-4000-8000-000000001401';
 const PLAYER_ID = '00000000-0000-4000-8000-000000001402';
 const PROVIDER_ID = 'provider-pending-reference';
@@ -79,7 +76,7 @@ async function persistedState() {
   };
 }
 
-describeWithDatabase('ProcessWagerTransactionUseCase PENDING_REFERENCE', () => {
+describe('ProcessWagerTransactionUseCase PENDING_REFERENCE', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
   });

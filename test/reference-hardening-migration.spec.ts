@@ -18,9 +18,6 @@ import {
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { openWalletFixture } from './support/financial-fixture.js';
 
-const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
-const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
-
 const MIGRATION_NAME = 'Migration20260830000200_reference_hardening';
 const WALLET_ID = '00000000-0000-4000-8000-000000001601';
 const PLAYER_ID = '00000000-0000-4000-8000-000000001602';
@@ -28,7 +25,7 @@ const TRANSACTION_ID = '00000000-0000-4000-8000-000000001603';
 
 let orm: MikroORM;
 
-describeWithDatabase('reference hardening migration', () => {
+describe('reference hardening migration', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
   });

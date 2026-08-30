@@ -31,9 +31,6 @@ import {
   openWalletFixture,
 } from './support/financial-fixture.js';
 
-const DATABASE_TESTS_ENABLED = process.env.RUN_DATABASE_TESTS === '1';
-const describeWithDatabase = DATABASE_TESTS_ENABLED ? describe : describe.skip;
-
 const WALLET_ID = '00000000-0000-4000-8000-000000001501';
 const PLAYER_ID = '00000000-0000-4000-8000-000000001502';
 const PROVIDER_ID = 'provider-pending-worker';
@@ -97,7 +94,7 @@ async function createPendingRefundAndReference() {
   return { pending, reference };
 }
 
-describeWithDatabase('PendingReferenceWorker', () => {
+describe('PendingReferenceWorker', () => {
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
     worker = new PendingReferenceWorker(orm.em);
