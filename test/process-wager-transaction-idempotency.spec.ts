@@ -188,6 +188,44 @@ describeWithDatabase('ProcessWagerTransactionUseCase idempotency', () => {
     expect(state.ledgerEntries).toHaveLength(1);
   });
 
+  it('applies a single financial effect for 50 concurrent identical requests', async () => {
+    const input = createInput();
+    const operations = Array.from({ length: 50 }, () =>
+      new ProcessWagerTransactionUseCase(orm.em.fork()).execute(input),
+    );
+
+    const responses = await Promise.all(operations);
+    const state = await persistedState();
+    const transactionIds = new Set(
+      responses.map((response) => response.transaction.id),
+    );
+    const observedBalances = new Set(
+      responses.map((response) => response.observedBalance?.toJSON().amount),
+    );
+
+    expect(responses).toHaveLength(50);
+    expect(transactionIds.size).toBe(1);
+    expect(observedBalances).toEqual(new Set(['75.00']));
+    expect(
+      responses.every(
+        (response) =>
+          response.transaction.idempotencyKey === input.idempotencyKey &&
+          response.transaction.payloadHash === input.payloadHash,
+      ),
+    ).toBe(true);
+    expect(state.transactions).toHaveLength(1);
+    expect(state.transactions[0]?.id).toBe(responses[0]?.transaction.id);
+    expect(state.transactions[0]?.observedBalance).toBe('75.00');
+    expect(state.ledgerEntries).toHaveLength(1);
+    expect(state.ledgerEntries[0]?.transactionId).toBe(
+      state.transactions[0]?.id,
+    );
+    expect(state.ledgerEntries[0]?.amount).toBe('25.00');
+    expect(state.ledgerEntries[0]?.balanceBefore).toBe('100.00');
+    expect(state.ledgerEntries[0]?.balanceAfter).toBe('75.00');
+    expect(state.wallet?.balance).toBe('75.00');
+  });
+
   it('rejects the same key with a different payload hash as a conflict', async () => {
     await createUseCase(TRANSACTION_ID, LEDGER_ID).execute(createInput());
 
