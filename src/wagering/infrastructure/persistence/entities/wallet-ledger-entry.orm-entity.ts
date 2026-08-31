@@ -1,5 +1,7 @@
 import { Entity, PrimaryKey, Property } from '@mikro-orm/decorators/legacy';
 
+import type { LedgerDirection } from '../../../domain/wallet-ledger-entry.js';
+
 @Entity({ tableName: 'wallet_ledger_entries' })
 export class WalletLedgerEntryOrmEntity {
   @PrimaryKey({ type: 'uuid' })
@@ -18,7 +20,7 @@ export class WalletLedgerEntryOrmEntity {
   transactionId!: string;
 
   @Property()
-  direction!: string;
+  direction!: LedgerDirection;
 
   @Property({
     columnType: 'numeric(20,2)',

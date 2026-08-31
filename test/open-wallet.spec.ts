@@ -338,7 +338,7 @@ describe('OpenWalletUseCase', () => {
 
     expect(ledgerEntity?.id).toBe(OPENING_LEDGER_ID);
 
-    expect(ledgerEntity?.direction).toBe('CREDIT');
+    expect(ledgerEntity?.direction).toBe(LedgerDirection.Credit);
 
     expect(ledgerEntity?.amount).toBe('100.00');
 

@@ -45,7 +45,7 @@ function isNonEmptyString(value: unknown): value is string {
 
 export function createWagerTransactionMessage(
   input: ProcessWagerTransactionInput,
-  messageId = randomUUID(),
+  messageId: string = randomUUID(),
   occurredAt = new Date(),
 ): WagerTransactionMessage {
   return {

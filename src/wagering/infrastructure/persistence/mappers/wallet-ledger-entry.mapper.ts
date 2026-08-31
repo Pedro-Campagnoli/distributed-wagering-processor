@@ -1,8 +1,5 @@
 import { Money } from '../../../domain/money.js';
-import {
-  LedgerDirection,
-  WalletLedgerEntry,
-} from '../../../domain/wallet-ledger-entry.js';
+import { WalletLedgerEntry } from '../../../domain/wallet-ledger-entry.js';
 import { WalletLedgerEntryOrmEntity } from '../entities/wallet-ledger-entry.orm-entity.js';
 
 export class WalletLedgerEntryMapper {
@@ -11,7 +8,7 @@ export class WalletLedgerEntryMapper {
       id: entity.id,
       walletId: entity.walletId,
       transactionId: entity.transactionId,
-      direction: entity.direction as LedgerDirection,
+      direction: entity.direction,
       money: Money.from({
         amount: entity.amount,
         currency: entity.currency,

@@ -336,7 +336,7 @@ describe('PostgreSQL repositories', () => {
 
       expect(found?.transactionId).toBe(TRANSACTION_ID);
 
-      expect(found?.direction).toBe('DEBIT');
+      expect(found?.direction).toBe(LedgerDirection.Debit);
 
       expect(found?.amount).toBe('25.00');
 

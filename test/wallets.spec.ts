@@ -16,6 +16,8 @@ import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
 
+import { LedgerDirection } from '../src/wagering/domain/wallet-ledger-entry.js';
+
 import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wager-transaction.orm-entity.js';
 import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
@@ -161,7 +163,7 @@ describe('POST /wallets', () => {
 
     expect(ledger).toBeDefined();
 
-    expect(ledger?.direction).toBe('CREDIT');
+    expect(ledger?.direction).toBe(LedgerDirection.Credit);
 
     expect(ledger?.amount).toBe('100.00');
 
