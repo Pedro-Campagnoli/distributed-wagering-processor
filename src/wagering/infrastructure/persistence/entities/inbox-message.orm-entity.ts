@@ -14,6 +14,6 @@ export class InboxMessageOrmEntity {
   @Property({ fieldName: 'received_at' })
   receivedAt!: Date;
 
-  @Property({ fieldName: 'processed_at', nullable: true })
+  @Property({ type: Date, fieldName: 'processed_at', nullable: true })
   processedAt!: Date | null;
 }

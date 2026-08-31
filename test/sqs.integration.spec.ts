@@ -50,6 +50,7 @@ import { WagerTransactionOrmEntity } from '../src/wagering/infrastructure/persis
 import { WalletLedgerEntryOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet-ledger-entry.orm-entity.js';
 import { WalletOrmEntity } from '../src/wagering/infrastructure/persistence/entities/wallet.orm-entity.js';
 import { MikroOrmInboxMessageRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-inbox-message.repository.js';
+import { PendingReferenceWorker } from '../src/wagering/infrastructure/workers/pending-reference.worker.js';
 import {
   expectWalletBalanceMatchesLedger,
   openWalletFixture,
@@ -583,6 +584,75 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
 
     expect(shutdownCompleted).toBe(true);
     expect((await receiveOne(getWagerQueueUrl(), 1)).Messages).toBeUndefined();
+  });
+
+  it('resolves REFUND and ROLLBACK delivered before their references', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    const betExternalId = `late-bet-${randomUUID()}`;
+    const winExternalId = `late-win-${randomUUID()}`;
+    const refund = {
+      ...createInput(),
+      externalTransactionId: `early-refund-${randomUUID()}`,
+      idempotencyKey: `provider-sqs:early-refund-${randomUUID()}`,
+      kind: WagerTransactionKind.Refund,
+      referenceExternalTransactionId: betExternalId,
+    };
+    const bet = {
+      ...createInput(),
+      externalTransactionId: betExternalId,
+      idempotencyKey: `provider-sqs:${betExternalId}`,
+    };
+    const rollback = {
+      ...createInput(),
+      externalTransactionId: `early-rollback-${randomUUID()}`,
+      idempotencyKey: `provider-sqs:early-rollback-${randomUUID()}`,
+      kind: WagerTransactionKind.Rollback,
+      referenceExternalTransactionId: winExternalId,
+    };
+    const win = {
+      ...createInput(),
+      externalTransactionId: winExternalId,
+      idempotencyKey: `provider-sqs:${winExternalId}`,
+      kind: WagerTransactionKind.Win,
+    };
+
+    for (const input of [refund, bet, rollback, win]) {
+      await producer.send(input);
+      await consumer.runOnce();
+    }
+
+    await new PendingReferenceWorker(orm.em).runOnce(
+      new Date(Date.now() + 60_000),
+    );
+
+    const entityManager = orm.em.fork();
+    const [wallet, transactions, ledgerEntries] = await Promise.all([
+      entityManager.findOne(WalletOrmEntity, WALLET_ID),
+      entityManager.find(WagerTransactionOrmEntity, { walletId: WALLET_ID }),
+      entityManager.find(WalletLedgerEntryOrmEntity, { walletId: WALLET_ID }),
+    ]);
+    const operationIds = new Set(
+      transactions
+        .filter(
+          (transaction) => transaction.kind !== WagerTransactionKind.Opening,
+        )
+        .map((transaction) => transaction.id),
+    );
+    const operationLedger = ledgerEntries.filter((entry) =>
+      operationIds.has(entry.transactionId),
+    );
+
+    expect(
+      transactions
+        .filter((transaction) => operationIds.has(transaction.id))
+        .every(
+          (transaction) =>
+            transaction.status === WagerTransactionStatus.Processed,
+        ),
+    ).toBe(true);
+    expect(operationLedger).toHaveLength(4);
+    expect(wallet?.balance).toBe('100.00');
+    expectWalletBalanceMatchesLedger(wallet, ledgerEntries);
   });
 
   it('lets SQS move a repeatedly failing message to the DLQ', async () => {

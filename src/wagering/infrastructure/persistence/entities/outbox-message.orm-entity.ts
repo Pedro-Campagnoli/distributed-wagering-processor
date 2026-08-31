@@ -20,9 +20,9 @@ export class OutboxMessageOrmEntity {
   @Property()
   attempts!: number;
 
-  @Property({ fieldName: 'next_attempt_at', nullable: true })
+  @Property({ type: Date, fieldName: 'next_attempt_at', nullable: true })
   nextAttemptAt!: Date | null;
 
-  @Property({ fieldName: 'published_at', nullable: true })
+  @Property({ type: Date, fieldName: 'published_at', nullable: true })
   publishedAt!: Date | null;
 }

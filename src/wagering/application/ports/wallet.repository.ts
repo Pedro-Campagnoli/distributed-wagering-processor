@@ -1,4 +1,4 @@
-import { Wallet } from '@/wagering/domain/wallet.js';
+import { Wallet } from '../../domain/wallet.js';
 
 export interface WalletRepository {
   insert(wallet: Wallet): Promise<void>;

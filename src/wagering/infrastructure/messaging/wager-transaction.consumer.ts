@@ -6,13 +6,25 @@ import {
   type SQSClient,
 } from '@aws-sdk/client-sqs';
 import type { EntityManager } from '@mikro-orm/postgresql';
+import { DeadlockException, LockWaitTimeoutException } from '@mikro-orm/core';
 
-import { ProcessInboxWagerMessageUseCase } from '../../application/use-cases/process-inbox-wager-message.use-case.js';
+import {
+  DuplicateInboxMessageConflictError,
+  ProcessInboxWagerMessageUseCase,
+} from '../../application/use-cases/process-inbox-wager-message.use-case.js';
 import type { ProcessWagerTransactionOutput } from '../../application/use-cases/process-wager-transaction.use-case.js';
 import {
   IdempotencyConflictError,
   WalletPlayerMismatchError,
 } from '../../domain/errors.js';
+import {
+  parseWagerTransactionMessage,
+  type WagerTransactionMessage,
+} from './wager-transaction.message.js';
+import {
+  OperationalMetrics,
+  operationalMetrics,
+} from '../observability/operational-metrics.js';
 
 const POLL_INTERVAL_MS = 1_000;
 export const WAGER_TRANSACTION_CONSUMER_NAME = 'wager-transactions-consumer';
@@ -29,6 +41,7 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
     private readonly sqsClient: SQSClient,
     private readonly queueUrl: string,
     private readonly visibilityTimeoutSeconds = 30,
+    private readonly metrics: OperationalMetrics = operationalMetrics,
   ) {}
 
   onModuleInit(): void {
@@ -84,9 +97,12 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    const startedAt = performance.now();
+    let envelope: WagerTransactionMessage | undefined;
     let processing;
 
     try {
+      envelope = parseWagerTransactionMessage(message.Body);
       processing = await new ProcessInboxWagerMessageUseCase(
         this.entityManager,
       ).execute({
@@ -94,14 +110,49 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
         body: message.Body,
       });
     } catch (error) {
-      if (!this.isTerminalBusinessError(error)) {
-        throw error;
+      if (this.isTerminalBusinessError(error)) {
+        if (error instanceof IdempotencyConflictError) {
+          this.metrics.recordDuplicate();
+        }
+
+        this.logMessage('wager_message_terminal_error', envelope, error);
+        await this.deleteMessage(message.ReceiptHandle);
+        return;
       }
 
-      await this.deleteMessage(message.ReceiptHandle);
-      return;
+      this.metrics.recordRetry();
+
+      if (error instanceof DuplicateInboxMessageConflictError) {
+        this.metrics.recordDuplicate();
+      }
+
+      if (
+        error instanceof LockWaitTimeoutException ||
+        error instanceof DeadlockException
+      ) {
+        this.metrics.recordLockConflict();
+      }
+
+      this.logMessage('wager_message_retry', envelope, error);
+      throw error;
+    } finally {
+      this.metrics.recordProcessingLatency(performance.now() - startedAt);
     }
 
+    if (processing.alreadyProcessed || processing.result?.idempotentReplay) {
+      this.metrics.recordDuplicate();
+    }
+
+    if (processing.result) {
+      this.metrics.recordTransaction(processing.result.transaction.status);
+    }
+
+    this.logMessage(
+      'wager_message_processed',
+      envelope,
+      undefined,
+      processing.result?.transaction.id,
+    );
     await this.deleteMessage(message.ReceiptHandle);
 
     return processing.result;
@@ -123,6 +174,25 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  private logMessage(
+    event: string,
+    envelope: WagerTransactionMessage | undefined,
+    error?: unknown,
+    transactionId?: string,
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        event,
+        correlationId: envelope?.messageId,
+        messageId: envelope?.messageId,
+        transactionId,
+        walletId: envelope?.data.walletId,
+        providerId: envelope?.data.providerId,
+        errorName: error instanceof Error ? error.name : undefined,
+      }),
+    );
+  }
+
   private async tick(): Promise<void> {
     if (this.running || this.stopping) {
       return;
@@ -133,7 +203,12 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
     try {
       await this.runOnce();
     } catch (error) {
-      this.logger.error(error instanceof Error ? error.stack : String(error));
+      this.logger.error(
+        JSON.stringify({
+          event: 'wager_consumer_poll_failed',
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        }),
+      );
     } finally {
       this.running = false;
     }

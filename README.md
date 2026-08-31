@@ -3,11 +3,10 @@
 Backend do desafio técnico da Jungle Gaming, implementado com NestJS, TypeScript,
 MikroORM, PostgreSQL e Bun.
 
-O checkpoint atual cobre abertura de wallet, processamento financeiro atômico,
-concorrência por wallet, idempotência, `REFUND`, `ROLLBACK` e reprocessamento de
-referências pendentes, além de producer/consumer SQS local com Inbox persistente.
-O fluxo também possui Transactional Outbox e publicação local dos eventos de
-integração.
+O projeto cobre a API HTTP obrigatória, processamento financeiro atômico,
+concorrência por wallet, idempotência, reversões e referências fora de ordem. O
+mesmo fluxo financeiro é usado pelo consumer SQS, com Inbox persistente e
+Transactional Outbox.
 A descrição das decisões está em [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Requisitos
@@ -25,16 +24,23 @@ por mocks.
 cp .env.example .env
 bun install
 bun run docker:up
-bunx mikro-orm migration:up
+bun run migration:up
 ```
+
+O Compose sobe PostgreSQL 17 e LocalStack. O init do LocalStack cria
+`wager-transactions.fifo`, sua DLQ e `wager-events.fifo`; não é necessária conta
+AWS. Aguarde os dois containers ficarem `healthy` antes da primeira migration.
 
 ## Comandos
 
 ```bash
 bun run start:dev   # aplicação em modo de desenvolvimento
+bun run start:prod  # executa dist/ após bun run build
 bun test            # suíte completa, incluindo PostgreSQL e LocalStack
 bun run build       # compilação NestJS/TypeScript
 bun run lint        # análise estática
+bun run migration:up
+bun run migration:down
 bun run docker:down # encerra PostgreSQL e LocalStack
 ```
 
@@ -49,6 +55,11 @@ Implementado:
 
 - `Money` decimal e invariantes de wallet/ledger;
 - abertura de wallet pelo endpoint `POST /wallets`;
+- consultas de wallet, ledger e wager transactions;
+- submissão HTTP de wager com `Idempotency-Key` obrigatório;
+- reconciliação somente de leitura por ledger;
+- health checks separados em `/health/live` e `/health/ready`;
+- logs JSON contextuais e métricas simples em `/metrics`;
 - transação PostgreSQL única para cada fluxo financeiro;
 - lock pessimista de escrita por wallet;
 - idempotência persistente com SHA-256 canônico calculado internamente e replay
@@ -65,13 +76,33 @@ Implementado:
 
 Ainda pendente:
 
-- endpoint HTTP de ingestão de wager transactions;
 - processamento da DLQ e integração com uma conta AWS real;
-- observabilidade e operação distribuída da mensageria.
+- autenticação, por decisão de escopo documentada;
+- agregação externa das métricas e observabilidade distribuída.
 
 A Inbox e a Outbox participam da mesma transação raiz do fluxo SQS. A publicação
 da Outbox acontece somente depois do commit e segue entrega at-least-once. Os
 shutdown hooks aguardam o processamento em voo antes de encerrar os workers.
+
+## Endpoints
+
+```text
+POST /wallets
+GET  /wallets/:walletId
+GET  /wallets/:walletId/ledger?cursor=...&limit=50
+POST /wallets/:walletId/reconciliation
+POST /wagering/transactions
+GET  /wagering/transactions/:transactionId
+GET  /providers/:providerId/wagering/transactions/:externalTransactionId
+GET  /health/live
+GET  /health/ready
+GET  /metrics
+```
+
+`POST /wagering/transactions` exige o header `Idempotency-Key`. Primeira execução
+processada retorna `201`, replay retorna `200`, referência pendente retorna `202`,
+rejeição financeira retorna `422`, conflito idempotente retorna `409` e
+indisponibilidade de infraestrutura retorna `503`.
 
 ## Documentação
 

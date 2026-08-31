@@ -76,6 +76,20 @@ export class WalletNotFoundError extends Error {
   }
 }
 
+export class WagerTransactionNotFoundError extends Error {
+  constructor() {
+    super('Wager transaction not found');
+    this.name = 'WagerTransactionNotFoundError';
+  }
+}
+
+export class InvalidLedgerCursorError extends Error {
+  constructor() {
+    super('Invalid ledger cursor');
+    this.name = 'InvalidLedgerCursorError';
+  }
+}
+
 export class WalletPlayerMismatchError extends Error {
   constructor() {
     super('Wallet does not belong to the transaction player');

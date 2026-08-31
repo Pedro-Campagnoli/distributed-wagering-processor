@@ -19,6 +19,7 @@ export interface ProcessInboxWagerMessageInput {
 }
 
 export interface ProcessInboxWagerMessageOutput {
+  messageId: string;
   alreadyProcessed: boolean;
   result?: ProcessWagerTransactionOutput;
 }
@@ -51,7 +52,7 @@ export class ProcessInboxWagerMessageUseCase {
       }
 
       if (inboxMessage?.processedAt) {
-        return { alreadyProcessed: true };
+        return { messageId: message.messageId, alreadyProcessed: true };
       }
 
       if (!inboxMessage) {
@@ -81,6 +82,7 @@ export class ProcessInboxWagerMessageUseCase {
       await inboxRepository.markProcessed(inboxMessage, new Date());
 
       return {
+        messageId: message.messageId,
         alreadyProcessed: false,
         result,
       };

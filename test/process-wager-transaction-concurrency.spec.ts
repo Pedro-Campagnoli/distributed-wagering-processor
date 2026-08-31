@@ -6,6 +6,7 @@ import {
   expect,
   it,
 } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 
 import { MikroORM } from '@mikro-orm/postgresql';
 
@@ -35,18 +36,23 @@ const SECOND_LEDGER_ID = '00000000-0000-4000-8000-000000001006';
 
 let orm: MikroORM;
 
-function createInput(externalTransactionId: string) {
+function createInput(
+  externalTransactionId: string,
+  walletId = WALLET_ID,
+  playerId = PLAYER_ID,
+  amount = '80.00',
+) {
   return {
     providerId: 'provider-concurrency',
     externalTransactionId,
     idempotencyKey: `provider-concurrency:${externalTransactionId}`,
-    walletId: WALLET_ID,
-    playerId: PLAYER_ID,
+    walletId,
+    playerId,
     roundId: 'round-concurrency',
     gameId: 'game-concurrency',
     kind: WagerTransactionKind.Bet,
     money: Money.from({
-      amount: '80.00',
+      amount,
       currency: 'BRL',
     }),
   };
@@ -144,5 +150,111 @@ describe('ProcessWagerTransactionUseCase concurrency', () => {
     expect(debitLedgerEntries[0]?.amount).toBe('80.00');
     expect(debitLedgerEntries[0]?.balanceBefore).toBe('100.00');
     expect(debitLedgerEntries[0]?.balanceAfter).toBe('20.00');
+  });
+
+  it('processes different wallets concurrently without a global lock', async () => {
+    const secondWalletId = randomUUID();
+    const secondPlayerId = randomUUID();
+    await openWalletFixture(orm, secondWalletId, secondPlayerId);
+
+    const results = await Promise.all([
+      new ProcessWagerTransactionUseCase(orm.em.fork()).execute(
+        createInput('parallel-wallet-one'),
+      ),
+      new ProcessWagerTransactionUseCase(orm.em.fork()).execute(
+        createInput('parallel-wallet-two', secondWalletId, secondPlayerId),
+      ),
+    ]);
+    const entityManager = orm.em.fork();
+    const [firstWallet, secondWallet, firstLedger, secondLedger] =
+      await Promise.all([
+        entityManager.findOne(WalletOrmEntity, WALLET_ID),
+        entityManager.findOne(WalletOrmEntity, secondWalletId),
+        entityManager.find(WalletLedgerEntryOrmEntity, {
+          walletId: WALLET_ID,
+        }),
+        entityManager.find(WalletLedgerEntryOrmEntity, {
+          walletId: secondWalletId,
+        }),
+      ]);
+
+    expect(
+      results.every(
+        (result) =>
+          result.transaction.status === WagerTransactionStatus.Processed,
+      ),
+    ).toBe(true);
+    expect(firstWallet?.balance).toBe('20.00');
+    expect(secondWallet?.balance).toBe('20.00');
+    expectWalletBalanceMatchesLedger(firstWallet, firstLedger);
+    expectWalletBalanceMatchesLedger(secondWallet, secondLedger);
+  });
+
+  it('remains correct with four independent Bun processes', async () => {
+    const operations = Array.from({ length: 4 }, (_, index) =>
+      createInput(`multi-process-bet-${index}`, WALLET_ID, PLAYER_ID, '30.00'),
+    );
+    const children = operations.map((input) =>
+      Bun.spawn(
+        [
+          'bun',
+          'test/support/process-wager-child.ts',
+          JSON.stringify({
+            ...input,
+            money: input.money.toJSON(),
+          }),
+        ],
+        { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' },
+      ),
+    );
+    const childResults = await Promise.all(
+      children.map(async (child) => {
+        const [exitCode, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ]);
+
+        if (exitCode !== 0) {
+          throw new Error(stderr);
+        }
+
+        return JSON.parse(stdout.trim()) as {
+          transactionId: string;
+          status: WagerTransactionStatus;
+        };
+      }),
+    );
+    const entityManager = orm.em.fork();
+    const [wallet, transactions, ledgerEntries] = await Promise.all([
+      entityManager.findOne(WalletOrmEntity, WALLET_ID),
+      entityManager.find(WagerTransactionOrmEntity, {
+        walletId: WALLET_ID,
+        kind: WagerTransactionKind.Bet,
+      }),
+      entityManager.find(WalletLedgerEntryOrmEntity, { walletId: WALLET_ID }),
+    ]);
+    const debits = ledgerEntries.filter(
+      (entry) => entry.direction === LedgerDirection.Debit,
+    );
+
+    expect(childResults).toHaveLength(4);
+    expect(
+      childResults.filter(
+        (result) => result.status === WagerTransactionStatus.Processed,
+      ),
+    ).toHaveLength(3);
+    expect(
+      childResults.filter(
+        (result) => result.status === WagerTransactionStatus.Rejected,
+      ),
+    ).toHaveLength(1);
+    expect(
+      new Set(childResults.map((result) => result.transactionId)).size,
+    ).toBe(4);
+    expect(transactions).toHaveLength(4);
+    expect(debits).toHaveLength(3);
+    expect(wallet?.balance).toBe('10.00');
+    expectWalletBalanceMatchesLedger(wallet, ledgerEntries);
   });
 });

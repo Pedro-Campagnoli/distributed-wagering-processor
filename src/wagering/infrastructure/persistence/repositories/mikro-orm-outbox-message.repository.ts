@@ -36,6 +36,16 @@ export class MikroOrmOutboxMessageRepository {
     return entity ? OutboxMessageMapper.toDomain(entity) : undefined;
   }
 
+  async findOldestPendingOccurredAt(): Promise<Date | undefined> {
+    const entity = await this.entityManager.findOne(
+      OutboxMessageOrmEntity,
+      { publishedAt: null },
+      { orderBy: { occurredAt: 'asc', id: 'asc' } },
+    );
+
+    return entity?.occurredAt;
+  }
+
   async update(message: OutboxMessage): Promise<void> {
     const entity = await this.entityManager.findOne(
       OutboxMessageOrmEntity,

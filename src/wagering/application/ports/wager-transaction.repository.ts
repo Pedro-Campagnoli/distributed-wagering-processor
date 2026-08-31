@@ -1,7 +1,7 @@
 import {
   WagerTransaction,
   WagerTransactionKind,
-} from '@/wagering/domain/wager-transaction.js';
+} from '../../domain/wager-transaction.js';
 
 export interface WagerTransactionRepository {
   insert(transaction: WagerTransaction): Promise<void>;

@@ -314,6 +314,32 @@ describe('Transactional Outbox with PostgreSQL and LocalStack', () => {
     await expectFinancialInvariant();
   });
 
+  it('publishes committed events after the original publisher is replaced', async () => {
+    await process(createInput(WagerTransactionKind.Loss));
+    const stoppedPublisher = new OutboxPublisherWorker(
+      orm.em,
+      sqsClient,
+      getWagerEventsQueueUrl(),
+    );
+
+    await stoppedPublisher.onModuleDestroy();
+
+    const replacementPublisher = new OutboxPublisherWorker(
+      orm.em,
+      sqsClient,
+      getWagerEventsQueueUrl(),
+    );
+    const result = await replacementPublisher.runOnce();
+    const messages = await receiveEvents(1);
+    const persisted = await orm.em.fork().find(OutboxMessageOrmEntity, {});
+
+    expect(result).toEqual({ published: 1, retried: 0 });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.eventType).toBe('WagerTransactionProcessed');
+    expect(persisted[0]?.publishedAt).toBeInstanceOf(Date);
+    await expectFinancialInvariant();
+  });
+
   it('lets two publishers claim distinct pending rows without losing events', async () => {
     const operationCount = 8;
 

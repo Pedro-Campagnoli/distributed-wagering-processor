@@ -4,6 +4,10 @@ import type { EntityManager } from '@mikro-orm/postgresql';
 
 import { ProcessWagerTransactionUseCase } from '../../application/use-cases/process-wager-transaction.use-case.js';
 import { MikroOrmWagerTransactionRepository } from '../persistence/repositories/mikro-orm-wager-transaction.repository.js';
+import {
+  OperationalMetrics,
+  operationalMetrics,
+} from '../observability/operational-metrics.js';
 
 const POLL_INTERVAL_MS = 1_000;
 const BATCH_SIZE = 100;
@@ -15,7 +19,10 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
   private stopping = false;
   private inFlight?: Promise<void>;
 
-  constructor(private readonly entityManager: EntityManager) {}
+  constructor(
+    private readonly entityManager: EntityManager,
+    private readonly metrics: OperationalMetrics = operationalMetrics,
+  ) {}
 
   onModuleInit(): void {
     this.timer = setInterval(() => void this.tick(), POLL_INTERVAL_MS);
@@ -66,7 +73,32 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
         this.entityManager.fork(),
       );
 
-      await useCase.reprocessPending(transaction.id, transaction.walletId, now);
+      const result = await useCase.reprocessPending(
+        transaction.id,
+        transaction.walletId,
+        now,
+      );
+
+      if (
+        result &&
+        result.transaction.referenceRetryAttempts >
+          transaction.referenceRetryAttempts
+      ) {
+        this.metrics.recordRetry();
+      }
+
+      if (result) {
+        this.logger.log(
+          JSON.stringify({
+            event: 'pending_reference_checked',
+            correlationId: result.transaction.id,
+            transactionId: result.transaction.id,
+            walletId: result.transaction.walletId,
+            providerId: result.transaction.providerId,
+            status: result.transaction.status,
+          }),
+        );
+      }
     }
   }
 
@@ -80,7 +112,12 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
     try {
       await this.runOnce();
     } catch (error) {
-      this.logger.error(error instanceof Error ? error.stack : String(error));
+      this.logger.error(
+        JSON.stringify({
+          event: 'pending_reference_worker_failed',
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        }),
+      );
     } finally {
       this.running = false;
     }

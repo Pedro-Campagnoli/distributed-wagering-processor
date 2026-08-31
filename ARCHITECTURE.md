@@ -111,9 +111,8 @@ O `payloadHash` não faz parte do contrato de entrada e nunca é aceito como dad
 confiável do chamador. O próprio use case calcula SHA-256 sobre JSON canônico
 (chaves ordenadas) dos campos de negócio: provider, transação externa, wallet,
 player, round, game, kind, money e eventual referência. Metadados de transporte e
-a própria `idempotencyKey` não entram no hash. O cálculo fica no use case reutilizado
-pelo SQS e será automaticamente o mesmo no endpoint HTTP de wagering, que ainda
-está pendente.
+a própria `idempotencyKey` não entram no hash. HTTP e SQS chamam o mesmo
+`ProcessWagerTransactionUseCase` e, portanto, usam exatamente esse cálculo.
 
 Há uma segunda leitura após adquirir o lock da wallet. Ela fecha a corrida entre
 requisições idênticas que passaram juntas pela primeira leitura. As constraints
@@ -327,6 +326,66 @@ o envio e o processo morrer antes de confirmar `published_at`, a linha será
 publicada novamente. A deduplicação FIFO reduz duplicatas próximas, mas consumidores
 devem deduplicar por `eventId`, inclusive fora da janela do SQS.
 
+## API HTTP
+
+Os controllers convertem DTOs e respostas, enquanto escrita financeira permanece
+no `ProcessWagerTransactionUseCase`. As consultas e a reconciliação usam
+`WageringQueryService` e os repositories MikroORM existentes. O header
+`Idempotency-Key` é obrigatório e não pode ser substituído por um campo do body.
+
+Mapeamento do `POST /wagering/transactions`:
+
+| Resultado | HTTP |
+| --- | --- |
+| primeira execução processada | `201` |
+| replay idempotente | `200` |
+| `PENDING_REFERENCE` | `202` |
+| payload inválido | `400` |
+| conflito de idempotência | `409` |
+| rejeição de negócio persistida | `422` |
+| dependência de infraestrutura indisponível | `503` |
+
+O ledger usa paginação por cursor opaco em Base64 URL-safe. O conteúdo interno é o
+par estável `createdAt + id`, compatível com o índice e a ordenação decrescente.
+
+### Reconciliação
+
+`POST /wallets/:walletId/reconciliation` soma todos os créditos e débitos do ledger
+a partir de zero e compara o resultado com o saldo materializado. A resposta expõe
+saldo armazenado, calculado, diferença, consistência e quantidade de entradas. Uma
+divergência gera log e métrica, mas nunca altera wallet ou ledger.
+
+## Health e observabilidade
+
+`/health/live` verifica apenas o processo. `/health/ready` consulta PostgreSQL pelo
+ORM e os atributos das filas no SQS; falha de qualquer dependência retorna `503`.
+Os endpoints não possuem autenticação.
+
+Os logs relevantes usam mensagens JSON e incluem, quando conhecidos,
+`correlationId`, `messageId`, `transactionId`, `walletId` e `providerId`. Valores
+monetários e payloads completos não são logados.
+
+`/metrics` expõe contadores e gauges simples, mantidos em memória por instância:
+
+- transações observadas por status e duplicatas;
+- retries de consumer, referência e Outbox;
+- quantidade aproximada na DLQ, atualizada pelo readiness;
+- timeouts/deadlocks de lock reportados pelo driver;
+- lag da entrada pendente mais antiga da Outbox, amostrado pelo publisher;
+- contagem, média e máximo da latência de processamento;
+- divergências de reconciliação.
+
+Essas métricas são diagnósticas, não garantias de correção, e reiniciam com o
+processo. Não há Prometheus, OpenTelemetry, dashboard nem agregação entre réplicas.
+
+## Autenticação
+
+Autenticação não foi implementada para preservar o foco do desafio em correção
+financeira. Em produção, um IdP OIDC externo seria integrado por um `AuthGuard` nos
+controllers de wallet/wagering, validando a identidade do provider contra a claim;
+health permaneceria público e SQS continuaria como canal interno confiável. Não foi
+adicionado guard no-op porque ele poderia sugerir uma proteção inexistente.
+
 ## Garantias e limites atuais
 
 Implementado e verificado em PostgreSQL e LocalStack reais:
@@ -335,6 +394,8 @@ Implementado e verificado em PostgreSQL e LocalStack reais:
 - atomicidade wallet/transação/ledger;
 - exclusão mútua por wallet;
 - replay idempotente e concorrência de 50 chamadas;
+- wallets distintas em paralelo e quatro processos Bun concorrentes contra o mesmo
+  PostgreSQL;
 - unicidade de reversões efetivamente processadas;
 - retry concorrente de referências pendentes;
 - reconstrução do saldo pelo ledger nas fixtures financeiras;
@@ -343,7 +404,10 @@ Implementado e verificado em PostgreSQL e LocalStack reais:
 - envelope SQS lógico, hash canônico e conflito de payload na Inbox;
 - Outbox atômica, quatro eventos versionados, retry exponencial e publishers
   concorrentes com `SKIP LOCKED`;
-- rejeição terminal com ACK e falhas repetidas encaminhadas à DLQ.
+- rejeição terminal com ACK e falhas repetidas encaminhadas à DLQ;
+- recuperação depois do commit/antes do ACK, substituição do publisher e
+  `REFUND`/`ROLLBACK` entregues antes da referência;
+- endpoints HTTP, reconciliação, health checks, logs contextuais e métricas locais.
 
 Limitações conhecidas do checkpoint atual:
 
@@ -357,6 +421,9 @@ Limitações conhecidas do checkpoint atual:
   envio ao SQS; isso simplifica a reserva concorrente no checkpoint atual;
 - a entrega de eventos é at-least-once e depende de deduplicação por `eventId` no
   consumidor; ainda não existe consumer dos eventos neste projeto;
-- o consumer atual processa uma mensagem por polling e não possui observabilidade avançada;
-- não há teste distribuído entre processos/hosts: a concorrência atual usa conexões
-  PostgreSQL e `EntityManager.fork()` independentes no mesmo processo de teste.
+- o consumer atual processa uma mensagem por polling e não possui tracing distribuído;
+- métricas são locais ao processo, sem retenção ou agregação entre instâncias;
+- o teste com quatro processos compartilha o mesmo host e PostgreSQL; não simula
+  latência de rede, perda de nó físico ou implantação em múltiplos hosts;
+- autenticação não está implementada;
+- reconciliação detecta e sinaliza divergências, mas não possui correção automática.

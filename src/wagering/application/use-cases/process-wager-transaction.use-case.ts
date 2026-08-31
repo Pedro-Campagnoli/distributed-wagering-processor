@@ -14,8 +14,8 @@ import {
   InsufficientBalanceError,
   WalletNotFoundError,
   WalletPlayerMismatchError,
-} from '@/wagering/domain/errors.js';
-import { Wallet } from '@/wagering/domain/wallet.js';
+} from '../../domain/errors.js';
+import { Wallet } from '../../domain/wallet.js';
 import { WalletLedgerEntry } from '../../domain/wallet-ledger-entry.js';
 import { MikroOrmWagerTransactionRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wager-transaction.repository.js';
 import { MikroOrmWalletLedgerEntryRepository } from '../../infrastructure/persistence/repositories/mikro-orm-wallet-ledger-entry.repository.js';
@@ -41,6 +41,7 @@ export interface ProcessWagerTransactionOutput {
   observedBalance?: Money;
   wallet?: Wallet;
   ledgerEntry?: WalletLedgerEntry;
+  idempotentReplay: boolean;
 }
 
 interface ProcessedWagerTransaction {
@@ -94,6 +95,7 @@ export class ProcessWagerTransactionUseCase {
         return {
           transaction: existingTransaction,
           observedBalance: existingTransaction.observedBalance,
+          idempotentReplay: true,
         };
       }
 
@@ -122,6 +124,7 @@ export class ProcessWagerTransactionUseCase {
         return {
           transaction: concurrentTransaction,
           observedBalance: concurrentTransaction.observedBalance,
+          idempotentReplay: true,
         };
       }
 
@@ -192,6 +195,7 @@ export class ProcessWagerTransactionUseCase {
       return {
         ...result,
         observedBalance,
+        idempotentReplay: false,
       };
     });
   }
@@ -266,6 +270,7 @@ export class ProcessWagerTransactionUseCase {
           transaction,
           wallet,
           observedBalance: wallet.balance,
+          idempotentReplay: false,
         };
       }
 
@@ -291,6 +296,7 @@ export class ProcessWagerTransactionUseCase {
           transaction,
           wallet,
           observedBalance: wallet.balance,
+          idempotentReplay: false,
         };
       }
 
@@ -311,6 +317,7 @@ export class ProcessWagerTransactionUseCase {
       return {
         ...result,
         observedBalance,
+        idempotentReplay: false,
       };
     });
   }

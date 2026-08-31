@@ -4,6 +4,10 @@ import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 import type { EntityManager } from '@mikro-orm/postgresql';
 
 import { MikroOrmOutboxMessageRepository } from '../persistence/repositories/mikro-orm-outbox-message.repository.js';
+import {
+  OperationalMetrics,
+  operationalMetrics,
+} from '../observability/operational-metrics.js';
 
 const POLL_INTERVAL_MS = 1_000;
 const DEFAULT_BATCH_SIZE = 100;
@@ -25,6 +29,7 @@ export class OutboxPublisherWorker implements OnModuleInit, OnModuleDestroy {
     private readonly sqsClient: SQSClient,
     private readonly queueUrl: string,
     private readonly batchSize = DEFAULT_BATCH_SIZE,
+    private readonly metrics: OperationalMetrics = operationalMetrics,
   ) {}
 
   onModuleInit(): void {
@@ -65,6 +70,12 @@ export class OutboxPublisherWorker implements OnModuleInit, OnModuleDestroy {
 
   private async publishDue(now: Date): Promise<OutboxPublishResult> {
     const result: OutboxPublishResult = { published: 0, retried: 0 };
+    const oldestPending = await new MikroOrmOutboxMessageRepository(
+      this.entityManager.fork(),
+    ).findOldestPendingOccurredAt();
+    this.metrics.setOutboxLag(
+      oldestPending ? now.getTime() - oldestPending.getTime() : 0,
+    );
 
     for (let index = 0; index < this.batchSize; index++) {
       const outcome = await this.publishNext(now);
@@ -100,15 +111,42 @@ export class OutboxPublisherWorker implements OnModuleInit, OnModuleDestroy {
       } catch {
         message.scheduleRetry(now);
         await repository.update(message);
+        this.metrics.recordRetry();
+        this.logPublication('outbox_publication_retry', message.payload);
 
         return 'retried';
       }
 
       message.markPublished(new Date());
       await repository.update(message);
+      this.logPublication('outbox_message_published', message.payload);
 
       return 'published';
     });
+  }
+
+  private logPublication(
+    event: string,
+    payload: Readonly<Record<string, unknown>>,
+  ): void {
+    const data = payload.data as
+      | {
+          transactionId?: string;
+          walletId?: string;
+          providerId?: string;
+        }
+      | undefined;
+
+    this.logger.log(
+      JSON.stringify({
+        event,
+        correlationId: payload.correlationId,
+        transactionId: data?.transactionId,
+        walletId: data?.walletId,
+        providerId: data?.providerId,
+        eventId: payload.eventId,
+      }),
+    );
   }
 
   private async tick(): Promise<void> {
@@ -121,7 +159,12 @@ export class OutboxPublisherWorker implements OnModuleInit, OnModuleDestroy {
     try {
       await this.runOnce();
     } catch (error) {
-      this.logger.error(error instanceof Error ? error.stack : String(error));
+      this.logger.error(
+        JSON.stringify({
+          event: 'outbox_publisher_failed',
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        }),
+      );
     } finally {
       this.running = false;
     }

@@ -96,6 +96,7 @@ export class WagerTransactionOrmEntity {
   referenceRetryAttempts: number = 0;
 
   @Property({
+    type: Date,
     fieldName: 'next_reference_retry_at',
     nullable: true,
   })
@@ -107,6 +108,7 @@ export class WagerTransactionOrmEntity {
   createdAt!: Date;
 
   @Property({
+    type: Date,
     fieldName: 'processed_at',
     nullable: true,
   })

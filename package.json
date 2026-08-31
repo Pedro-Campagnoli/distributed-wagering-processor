@@ -15,6 +15,8 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "oxlint src/ test/",
+    "migration:up": "bunx --bun mikro-orm migration:up",
+    "migration:down": "bunx --bun mikro-orm migration:down",
     "test": "bun test",
     "test:money": "bun test src/wagering/domain/money.spec.ts",
     "test:wallet": "bun test src/wagering/domain/wallet.spec.ts",
