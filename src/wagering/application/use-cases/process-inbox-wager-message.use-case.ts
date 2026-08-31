@@ -5,6 +5,10 @@ import {
   type ProcessWagerTransactionOutput,
 } from './process-wager-transaction.use-case.js';
 import { Money } from '../../domain/money.js';
+import {
+  IdempotencyConflictError,
+  WalletPlayerMismatchError,
+} from '../../domain/errors.js';
 import { InboxMessageOrmEntity } from '../../infrastructure/persistence/entities/inbox-message.orm-entity.js';
 import { MikroOrmInboxMessageRepository } from '../../infrastructure/persistence/repositories/mikro-orm-inbox-message.repository.js';
 import {
@@ -22,6 +26,7 @@ export interface ProcessInboxWagerMessageOutput {
   messageId: string;
   alreadyProcessed: boolean;
   result?: ProcessWagerTransactionOutput;
+  terminalError?: IdempotencyConflictError | WalletPlayerMismatchError;
 }
 
 export class DuplicateInboxMessageConflictError extends Error {
@@ -74,10 +79,29 @@ export class ProcessInboxWagerMessageUseCase {
         throw new InvalidWagerTransactionMessageError();
       }
 
-      const result = await new ProcessWagerTransactionUseCase(tx).execute({
-        ...message.data,
-        money,
-      });
+      let result: ProcessWagerTransactionOutput;
+
+      try {
+        result = await new ProcessWagerTransactionUseCase(tx).execute({
+          ...message.data,
+          money,
+        });
+      } catch (error) {
+        if (!(
+          error instanceof IdempotencyConflictError ||
+          error instanceof WalletPlayerMismatchError
+        )) {
+          throw error;
+        }
+
+        await inboxRepository.markProcessed(inboxMessage, new Date());
+
+        return {
+          messageId: message.messageId,
+          alreadyProcessed: false,
+          terminalError: error,
+        };
+      }
 
       await inboxRepository.markProcessed(inboxMessage, new Date());
 

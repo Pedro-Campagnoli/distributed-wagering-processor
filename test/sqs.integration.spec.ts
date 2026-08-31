@@ -334,7 +334,7 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
 
     await producer.send(first);
     await consumer.runOnce();
-    await producer.send(conflicting);
+    const conflictingMessageId = await producer.send(conflicting);
     const conflictResult = await consumer.runOnce();
 
     const state = await persistedFinancialState();
@@ -347,7 +347,39 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
     expect(remainingMessages.Messages).toBeUndefined();
     expect(state.wallet?.balance).toBe('75.00');
     expect(state.wagerTransactions).toHaveLength(1);
+    expect(state.inboxMessages).toHaveLength(2);
+    expect(
+      state.inboxMessages.find(
+        (message) => message.messageId === conflictingMessageId,
+      )?.processedAt,
+    ).toBeInstanceOf(Date);
     expect(debits).toHaveLength(1);
+    expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
+  });
+
+  it('commits Inbox before acknowledging a terminal wallet mismatch', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    const input = {
+      ...createInput(),
+      playerId: randomUUID(),
+    };
+    const messageId = await producer.send(input);
+
+    expect(await consumer.runOnce()).toBeUndefined();
+
+    const state = await persistedFinancialState();
+    const inbox = state.inboxMessages.find(
+      (message) => message.messageId === messageId,
+    );
+
+    expect(inbox?.processedAt).toBeInstanceOf(Date);
+    expect(state.wallet?.balance).toBe('100.00');
+    expect(state.wagerTransactions).toHaveLength(0);
+    expect(
+      state.ledgerEntries.filter(
+        (entry) => entry.direction === LedgerDirection.Debit,
+      ),
+    ).toHaveLength(0);
     expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
   });
 
@@ -425,6 +457,62 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
     expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
   });
 
+  it('applies exponential visibility backoff to transient failures', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    await producer.send(createInput());
+    const retryClient = createSqsClient();
+    const visibilityTimeouts: number[] = [];
+
+    retryClient.middlewareStack.add(
+      (next, context) => async (args) => {
+        if (context.commandName === 'ChangeMessageVisibilityCommand') {
+          const input = args.input as { VisibilityTimeout?: number };
+          visibilityTimeouts.push(input.VisibilityTimeout ?? -1);
+        }
+
+        return next(args);
+      },
+      { step: 'initialize', name: 'captureRetryVisibilityBackoff' },
+    );
+
+    const retryConsumer = new WagerTransactionConsumer(
+      orm.em,
+      retryClient,
+      getWagerQueueUrl(),
+      1,
+    );
+    const originalMarkProcessed =
+      MikroOrmInboxMessageRepository.prototype.markProcessed;
+
+    MikroOrmInboxMessageRepository.prototype.markProcessed = async () => {
+      throw new Error('Simulated transient database failure');
+    };
+
+    try {
+      await expect(retryConsumer.runOnce()).rejects.toThrow(
+        'Simulated transient database failure',
+      );
+      await Bun.sleep(1_050);
+      await expect(retryConsumer.runOnce()).rejects.toThrow(
+        'Simulated transient database failure',
+      );
+    } finally {
+      MikroOrmInboxMessageRepository.prototype.markProcessed =
+        originalMarkProcessed;
+    }
+
+    expect(visibilityTimeouts).toEqual([1, 2]);
+
+    await Bun.sleep(2_050);
+    const result = await retryConsumer.runOnce();
+    retryClient.destroy();
+
+    expect(result?.transaction.status).toBe(WagerTransactionStatus.Processed);
+    const state = await persistedFinancialState();
+    expect(state.wallet?.balance).toBe('75.00');
+    expectWalletBalanceMatchesLedger(state.wallet, state.ledgerEntries);
+  });
+
   it('deduplicates redelivery after commit when the first ACK fails', async () => {
     await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
     const input = createInput();
@@ -482,6 +570,48 @@ describe('LocalStack SQS wagering flow with persistent Inbox', () => {
       finalState.wallet,
       finalState.ledgerEntries,
     );
+  });
+
+  it('recovers when a worker process dies after commit and before ACK', async () => {
+    await openWalletFixture(orm, WALLET_ID, PLAYER_ID);
+    const messageId = await producer.send(createInput());
+    const child = Bun.spawn(
+      ['bun', 'test/support/sqs-consumer-crash-after-commit.ts'],
+      { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' },
+    );
+    const [exitCode, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+    ]);
+
+    if (exitCode !== 73) {
+      throw new Error(stderr || `Unexpected consumer exit code: ${exitCode}`);
+    }
+
+    const committed = await persistedFinancialState();
+    expect(committed.wallet?.balance).toBe('75.00');
+    expect(committed.inboxMessages[0]?.messageId).toBe(messageId);
+    expect(committed.inboxMessages[0]?.processedAt).toBeInstanceOf(Date);
+
+    await Bun.sleep(1_050);
+    const recoveryConsumer = new WagerTransactionConsumer(
+      orm.em,
+      sqsClient,
+      getWagerQueueUrl(),
+      30,
+    );
+    expect(await recoveryConsumer.runOnce()).toBeUndefined();
+
+    const recovered = await persistedFinancialState();
+    const debits = recovered.ledgerEntries.filter(
+      (entry) => entry.direction === LedgerDirection.Debit,
+    );
+
+    expect(recovered.wallet?.balance).toBe('75.00');
+    expect(recovered.wagerTransactions).toHaveLength(1);
+    expect(recovered.inboxMessages).toHaveLength(1);
+    expect(debits).toHaveLength(1);
+    expectWalletBalanceMatchesLedger(recovered.wallet, recovered.ledgerEntries);
   });
 
   it('rejects a reused logical message id with a different payload', async () => {

@@ -14,7 +14,12 @@ import {
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
+import { ProcessWagerTransactionUseCase } from '../src/wagering/application/use-cases/process-wager-transaction.use-case.js';
+import { WageringQueryService } from '../src/wagering/application/services/wagering-query.service.js';
+import { Money } from '../src/wagering/domain/money.js';
+import { WagerTransactionKind } from '../src/wagering/domain/wager-transaction.js';
 import { operationalMetrics } from '../src/wagering/infrastructure/observability/operational-metrics.js';
+import { MikroOrmWalletLedgerEntryRepository } from '../src/wagering/infrastructure/persistence/repositories/mikro-orm-wallet-ledger-entry.repository.js';
 import { GlobalExceptionFilter } from '../src/wagering/presentation/http/filters/global-exception.filter.js';
 
 describe('Checkpoint 4 HTTP API', () => {
@@ -237,5 +242,79 @@ describe('Checkpoint 4 HTTP API', () => {
       processingLatencyMs: { count: 0, average: 0, max: 0 },
       reconciliationMismatches: 0,
     });
+  });
+
+  it('reconciles wallet and ledger from one locked transactional snapshot', async () => {
+    const playerId = randomUUID();
+    const walletResponse = await request(app.getHttpServer())
+      .post('/wallets')
+      .send({
+        playerId,
+        initialBalance: { amount: '100.00', currency: 'BRL' },
+      });
+    const walletId = walletResponse.body.id as string;
+    const queries = app.get(WageringQueryService);
+    const processor = app.get(ProcessWagerTransactionUseCase);
+    const originalFindAll =
+      MikroOrmWalletLedgerEntryRepository.prototype.findAllByWalletId;
+    let releaseLedgerRead!: () => void;
+    let signalLedgerRead!: () => void;
+    const ledgerReadReleased = new Promise<void>((resolve) => {
+      releaseLedgerRead = resolve;
+    });
+    const ledgerReadStarted = new Promise<void>((resolve) => {
+      signalLedgerRead = resolve;
+    });
+
+    MikroOrmWalletLedgerEntryRepository.prototype.findAllByWalletId =
+      async function (requestedWalletId) {
+        signalLedgerRead();
+        await ledgerReadReleased;
+        return originalFindAll.call(this, requestedWalletId);
+      };
+
+    try {
+      const reconciliationPromise = queries.reconcileWallet(walletId);
+      await ledgerReadStarted;
+      let wagerFinished = false;
+      const externalTransactionId = `reconciliation-bet-${randomUUID()}`;
+      const wagerPromise = processor
+        .execute({
+          providerId: 'provider-reconciliation',
+          externalTransactionId,
+          idempotencyKey: `provider-reconciliation:${externalTransactionId}`,
+          walletId,
+          playerId,
+          roundId: 'round-reconciliation',
+          gameId: 'game-reconciliation',
+          kind: WagerTransactionKind.Bet,
+          money: Money.from({ amount: '25.00', currency: 'BRL' }),
+        })
+        .finally(() => {
+          wagerFinished = true;
+        });
+
+      await Bun.sleep(20);
+      expect(wagerFinished).toBe(false);
+
+      releaseLedgerRead();
+      const [reconciliation] = await Promise.all([
+        reconciliationPromise,
+        wagerPromise,
+      ]);
+
+      expect(reconciliation.consistent).toBe(true);
+      expect(reconciliation.storedBalance.toJSON().amount).toBe('100.00');
+      expect(reconciliation.calculatedBalance.toJSON().amount).toBe('100.00');
+    } finally {
+      releaseLedgerRead();
+      MikroOrmWalletLedgerEntryRepository.prototype.findAllByWalletId =
+        originalFindAll;
+    }
+
+    const finalReconciliation = await queries.reconcileWallet(walletId);
+    expect(finalReconciliation.consistent).toBe(true);
+    expect(finalReconciliation.storedBalance.toJSON().amount).toBe('75.00');
+    expect(finalReconciliation.calculatedBalance.toJSON().amount).toBe('75.00');
   });
 });

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { cwd } from 'node:process';
 
 import {
   DeleteMessageCommand,
@@ -314,15 +315,24 @@ describe('Transactional Outbox with PostgreSQL and LocalStack', () => {
     await expectFinancialInvariant();
   });
 
-  it('publishes committed events after the original publisher is replaced', async () => {
+  it('publishes committed events after a publisher process crashes and is replaced', async () => {
     await process(createInput(WagerTransactionKind.Loss));
-    const stoppedPublisher = new OutboxPublisherWorker(
-      orm.em,
-      sqsClient,
-      getWagerEventsQueueUrl(),
+    const child = Bun.spawn(
+      ['bun', 'test/support/outbox-publisher-crash-before-send.ts'],
+      { cwd: cwd(), stdout: 'pipe', stderr: 'pipe' },
     );
+    const [exitCode, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+    ]);
 
-    await stoppedPublisher.onModuleDestroy();
+    if (exitCode !== 74) {
+      throw new Error(stderr || `Unexpected publisher exit code: ${exitCode}`);
+    }
+
+    const pending = await orm.em.fork().find(OutboxMessageOrmEntity, {});
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.publishedAt).toBeNull();
 
     const replacementPublisher = new OutboxPublisherWorker(
       orm.em,
@@ -337,6 +347,58 @@ describe('Transactional Outbox with PostgreSQL and LocalStack', () => {
     expect(messages).toHaveLength(1);
     expect(messages[0]?.eventType).toBe('WagerTransactionProcessed');
     expect(persisted[0]?.publishedAt).toBeInstanceOf(Date);
+    await expectFinancialInvariant();
+  });
+
+  it('reuses eventId when publication succeeds before its database update fails', async () => {
+    await process(createInput(WagerTransactionKind.Loss));
+    const uncertainClient = createSqsClient();
+    let failAfterSend = true;
+
+    uncertainClient.middlewareStack.add(
+      (next, context) => async (args) => {
+        const result = await next(args);
+
+        if (context.commandName === 'SendMessageCommand' && failAfterSend) {
+          failAfterSend = false;
+          throw new Error('Simulated failure after SQS accepted the event');
+        }
+
+        return result;
+      },
+      { step: 'initialize', name: 'failAfterSuccessfulOutboxSend' },
+    );
+
+    const publisher = new OutboxPublisherWorker(
+      orm.em,
+      uncertainClient,
+      getWagerEventsQueueUrl(),
+      1,
+    );
+    const now = new Date('2026-08-30T12:00:00.000Z');
+
+    expect(await publisher.runOnce(now)).toEqual({ published: 0, retried: 1 });
+    expect(
+      await publisher.runOnce(new Date('2026-08-30T12:00:01.000Z')),
+    ).toEqual({ published: 1, retried: 0 });
+
+    const events = await receiveEvents(1);
+    const extra = await sqsClient.send(
+      new ReceiveMessageCommand({
+        QueueUrl: getWagerEventsQueueUrl(),
+        MaxNumberOfMessages: 1,
+        WaitTimeSeconds: 1,
+        VisibilityTimeout: 30,
+      }),
+    );
+    const persisted = (await orm.em.fork().find(OutboxMessageOrmEntity, {}))[0];
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventId).toBe(persisted?.id);
+    expect(extra.Messages).toBeUndefined();
+    expect(persisted?.attempts).toBe(1);
+    expect(persisted?.publishedAt).toBeInstanceOf(Date);
+    uncertainClient.destroy();
     await expectFinancialInvariant();
   });
 

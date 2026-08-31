@@ -77,7 +77,8 @@ export class Migration20260830000009_database_invariants extends Migration {
           "reference_external_transaction_id"
         )
         where "kind" in ('REFUND', 'ROLLBACK')
-          and "reference_external_transaction_id" is not null;
+          and "reference_external_transaction_id" is not null
+          and "status" = 'PROCESSED';
     `);
 
     this.addSql(`

@@ -28,6 +28,15 @@ LocalStack estiverem indisponíveis, o comando falha explicitamente.
 
 - [Database constraints](./database/database-constraints.md)
 
+Os testes de integração exercitam atomicidade de Inbox/Outbox, backoff e DLQ no
+LocalStack, além de migrations `down/up`. Os cenários de recovery encerram processos
+Bun reais depois do commit/antes do ACK e antes do envio de uma Outbox; uma nova
+instância recupera o estado persistido.
+
+Os testes de concorrência incluem BET `80.00 + 80.00`, 50 replays idempotentes,
+wallets diferentes e quatro processos independentes. Os cenários financeiros
+reconstroem o saldo pelo ledger como pós-condição.
+
 ## HTTP
 
 - [Wallets](./http/wallets.md)

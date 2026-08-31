@@ -115,41 +115,50 @@ export class WageringQueryService {
   }
 
   async reconcileWallet(walletId: string): Promise<WalletReconciliation> {
-    const wallet = await this.getWallet(walletId);
-    const entries = await new MikroOrmWalletLedgerEntryRepository(
-      this.entityManager.fork(),
-    ).findAllByWalletId(walletId);
-    let calculatedBalance = Money.zero(wallet.currency);
+    return this.entityManager.fork().transactional(async (tx) => {
+      const wallet = await new MikroOrmWalletRepository(tx).findById(walletId, {
+        lock: true,
+      });
 
-    for (const entry of entries) {
-      calculatedBalance =
-        entry.direction === LedgerDirection.Credit
-          ? calculatedBalance.add(entry.money)
-          : calculatedBalance.subtract(entry.money);
-    }
+      if (!wallet) {
+        throw new WalletNotFoundError(walletId);
+      }
 
-    const difference = wallet.balance.subtract(calculatedBalance);
-    const consistent = difference.isZero();
+      const entries = await new MikroOrmWalletLedgerEntryRepository(
+        tx,
+      ).findAllByWalletId(walletId);
+      let calculatedBalance = Money.zero(wallet.currency);
 
-    if (!consistent) {
-      this.metrics.recordReconciliationMismatch();
-      this.logger.warn(
-        JSON.stringify({
-          event: 'wallet_reconciliation_mismatch',
-          walletId,
-          checkedEntries: entries.length,
-        }),
-      );
-    }
+      for (const entry of entries) {
+        calculatedBalance =
+          entry.direction === LedgerDirection.Credit
+            ? calculatedBalance.add(entry.money)
+            : calculatedBalance.subtract(entry.money);
+      }
 
-    return {
-      walletId,
-      storedBalance: wallet.balance,
-      calculatedBalance,
-      difference,
-      consistent,
-      checkedEntries: entries.length,
-    };
+      const difference = wallet.balance.subtract(calculatedBalance);
+      const consistent = difference.isZero();
+
+      if (!consistent) {
+        this.metrics.recordReconciliationMismatch();
+        this.logger.warn(
+          JSON.stringify({
+            event: 'wallet_reconciliation_mismatch',
+            walletId,
+            checkedEntries: entries.length,
+          }),
+        );
+      }
+
+      return {
+        walletId,
+        storedBalance: wallet.balance,
+        calculatedBalance,
+        difference,
+        consistent,
+        checkedEntries: entries.length,
+      };
+    });
   }
 
   private encodeCursor(entry: WalletLedgerEntry): string {

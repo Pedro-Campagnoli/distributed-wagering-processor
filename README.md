@@ -68,11 +68,14 @@ Implementado:
 - `PENDING_REFERENCE` e worker local com retry exponencial;
 - filas FIFO locais `wager-transactions.fifo` e `wager-transactions-dlq.fifo`;
 - producer e consumer com envelope SQS obrigatório, Inbox por `messageId` lógico,
-  redelivery seguro e redrive para DLQ;
+  redelivery seguro, backoff exponencial e redrive para DLQ;
 - Transactional Outbox e publisher para a fila FIFO `wager-events.fifo`;
 - eventos `WagerTransactionProcessed`, `WagerTransactionRejected`,
   `WalletBalanceChanged` e `WagerTransactionPendingReference`;
 - testes unitários, HTTP, integração, migrations e concorrência em PostgreSQL e LocalStack.
+
+Os testes de recovery encerram processos Bun reais depois do commit/antes do ACK e
+durante uma publicação da Outbox, validando a retomada por outra instância.
 
 Ainda pendente:
 

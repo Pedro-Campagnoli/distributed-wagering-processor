@@ -181,7 +181,9 @@ processamento e `nextReferenceRetryAt` é validado novamente depois do lock. Uma
 instância atrasada não incrementa attempts nem reaplica um efeito já concluído.
 
 A migration de hardening preenche `next_reference_retry_at` de pendências antigas
-que estejam com `NULL`, e possui operação reversa.
+que estejam com `NULL`, e possui operação reversa. A unicidade de reversões
+processadas pertence à migration de invariantes anterior; assim, o `down` do
+hardening restaura somente o backfill que ele próprio introduziu.
 
 ## SQS local
 
@@ -238,11 +240,15 @@ mensagem.
 
 Rejeições de negócio representadas por `WagerTransaction REJECTED` são resultados
 terminais normais: Inbox e resultado são persistidos e a mensagem recebe ACK.
-Conflitos de negócio terminais também recebem ACK. Falhas de infraestrutura e
-payloads permanentemente inválidos não recebem ACK; estes últimos chegam à DLQ
-pelo redrive. O retry depende apenas do visibility timeout e do redrive do SQS; não
-existe loop de retry manual na aplicação. Após três recebimentos sem sucesso, a
-mensagem vai para a DLQ.
+Conflitos de idempotência e incompatibilidade entre player e wallet também são
+capturados dentro da transação raiz: a Inbox é marcada como processada, sem efeito
+financeiro, o commit termina e somente então ocorre o ACK.
+
+Falhas de infraestrutura e payloads permanentemente inválidos não recebem ACK. O
+consumer usa `ApproximateReceiveCount` para alterar a visibilidade com backoff
+exponencial; a base é configurada por `SQS_RETRY_BASE_DELAY_SECONDS` e, por padrão,
+é igual ao visibility timeout de 30 segundos. Não há loop local de retry. Após três
+recebimentos sem sucesso, o redrive move a mensagem para a DLQ.
 
 O bootstrap habilita os shutdown hooks do NestJS. Em `SIGTERM`, consumer, worker de
 referências e publisher param de iniciar ciclos e aguardam o ciclo em voo. Se o
@@ -353,7 +359,9 @@ par estável `createdAt + id`, compatível com o índice e a ordenação decresc
 `POST /wallets/:walletId/reconciliation` soma todos os créditos e débitos do ledger
 a partir de zero e compara o resultado com o saldo materializado. A resposta expõe
 saldo armazenado, calculado, diferença, consistência e quantidade de entradas. Uma
-divergência gera log e métrica, mas nunca altera wallet ou ledger.
+divergência gera log e métrica, mas nunca altera wallet ou ledger. Wallet e ledger
+são lidos na mesma transação, sob lock da wallet, evitando um falso positivo caso
+uma operação financeira tente confirmar durante a reconciliação.
 
 ## Health e observabilidade
 
@@ -422,8 +430,11 @@ Implementado e verificado em PostgreSQL e LocalStack reais:
 - Outbox atômica, quatro eventos versionados, retry exponencial e publishers
   concorrentes com `SKIP LOCKED`;
 - rejeição terminal com ACK e falhas repetidas encaminhadas à DLQ;
-- recuperação depois do commit/antes do ACK, substituição do publisher e
-  `REFUND`/`ROLLBACK` entregues antes da referência;
+- backoff exponencial do redelivery SQS;
+- recuperação com encerramento real do processo depois do commit/antes do ACK e
+  durante a publicação da Outbox;
+- republicação com o mesmo `eventId` quando o envio foi aceito antes de uma falha,
+  além de `REFUND`/`ROLLBACK` entregues antes da referência;
 - endpoints HTTP, reconciliação, health checks, logs contextuais e métricas locais.
 
 Limitações conhecidas do checkpoint atual:
@@ -431,7 +442,8 @@ Limitações conhecidas do checkpoint atual:
 - o lock serializa por wallet, podendo limitar throughput em wallets muito ativas;
 - o worker usa polling local e não reserva lotes antes da execução; a correção entre
   instâncias depende do lock e da revalidação transacional;
-- a política de retry é fixa em código, sem configuração operacional ou jitter;
+- a base do retry SQS é configurável, mas limite, fator exponencial e redrive não
+  possuem jitter nem configuração dinâmica;
 - o SQS está integrado apenas ao LocalStack; não há configuração de deploy AWS;
 - não há extensão dinâmica de visibility timeout ou processamento da DLQ;
 - o publisher da Outbox mantém uma transação PostgreSQL curta aberta durante cada
@@ -443,4 +455,5 @@ Limitações conhecidas do checkpoint atual:
 - o teste com quatro processos compartilha o mesmo host e PostgreSQL; não simula
   latência de rede, perda de nó físico ou implantação em múltiplos hosts;
 - autenticação não está implementada;
-- reconciliação detecta e sinaliza divergências, mas não possui correção automática.
+- reconciliação bloqueia brevemente a wallet, detecta e sinaliza divergências, mas
+  não possui correção automática.

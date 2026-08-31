@@ -1,7 +1,9 @@
 import type { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
 import {
+  ChangeMessageVisibilityCommand,
   DeleteMessageCommand,
+  MessageSystemAttributeName,
   ReceiveMessageCommand,
   type SQSClient,
 } from '@aws-sdk/client-sqs';
@@ -13,10 +15,7 @@ import {
   ProcessInboxWagerMessageUseCase,
 } from '../../application/use-cases/process-inbox-wager-message.use-case.js';
 import type { ProcessWagerTransactionOutput } from '../../application/use-cases/process-wager-transaction.use-case.js';
-import {
-  IdempotencyConflictError,
-  WalletPlayerMismatchError,
-} from '../../domain/errors.js';
+import { IdempotencyConflictError } from '../../domain/errors.js';
 import {
   parseWagerTransactionMessage,
   type WagerTransactionMessage,
@@ -27,6 +26,7 @@ import {
 } from '../observability/operational-metrics.js';
 
 const POLL_INTERVAL_MS = 1_000;
+const MAX_SQS_VISIBILITY_TIMEOUT_SECONDS = 43_200;
 export const WAGER_TRANSACTION_CONSUMER_NAME = 'wager-transactions-consumer';
 
 export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
@@ -89,6 +89,9 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
         MaxNumberOfMessages: 1,
         WaitTimeSeconds: 1,
         VisibilityTimeout: this.visibilityTimeoutSeconds,
+        MessageSystemAttributeNames: [
+          MessageSystemAttributeName.ApproximateReceiveCount,
+        ],
       }),
     );
     const message = response.Messages?.[0];
@@ -110,16 +113,6 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
         body: message.Body,
       });
     } catch (error) {
-      if (this.isTerminalBusinessError(error)) {
-        if (error instanceof IdempotencyConflictError) {
-          this.metrics.recordDuplicate();
-        }
-
-        this.logMessage('wager_message_terminal_error', envelope, error);
-        await this.deleteMessage(message.ReceiptHandle);
-        return;
-      }
-
       this.metrics.recordRetry();
 
       if (error instanceof DuplicateInboxMessageConflictError) {
@@ -134,9 +127,27 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
       }
 
       this.logMessage('wager_message_retry', envelope, error);
+      await this.scheduleRetry(
+        message.ReceiptHandle,
+        message.Attributes?.ApproximateReceiveCount,
+      );
       throw error;
     } finally {
       this.metrics.recordProcessingLatency(performance.now() - startedAt);
+    }
+
+    if (processing.terminalError) {
+      if (processing.terminalError instanceof IdempotencyConflictError) {
+        this.metrics.recordDuplicate();
+      }
+
+      this.logMessage(
+        'wager_message_terminal_error',
+        envelope,
+        processing.terminalError,
+      );
+      await this.deleteMessage(message.ReceiptHandle);
+      return;
     }
 
     if (processing.alreadyProcessed || processing.result?.idempotentReplay) {
@@ -167,10 +178,33 @@ export class WagerTransactionConsumer implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private isTerminalBusinessError(error: unknown): boolean {
-    return (
-      error instanceof IdempotencyConflictError ||
-      error instanceof WalletPlayerMismatchError
+  private async scheduleRetry(
+    receiptHandle: string,
+    approximateReceiveCount: string | undefined,
+  ): Promise<void> {
+    const receiveCount = Math.max(
+      1,
+      Number.parseInt(approximateReceiveCount ?? '1', 10) || 1,
+    );
+    const baseDelay = Math.max(
+      0,
+      Number.parseInt(
+        process.env.SQS_RETRY_BASE_DELAY_SECONDS ??
+          String(this.visibilityTimeoutSeconds),
+        10,
+      ) || 0,
+    );
+    const visibilityTimeout = Math.min(
+      baseDelay * 2 ** (receiveCount - 1),
+      MAX_SQS_VISIBILITY_TIMEOUT_SECONDS,
+    );
+
+    await this.sqsClient.send(
+      new ChangeMessageVisibilityCommand({
+        QueueUrl: this.queueUrl,
+        ReceiptHandle: receiptHandle,
+        VisibilityTimeout: visibilityTimeout,
+      }),
     );
   }
 
