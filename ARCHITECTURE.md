@@ -380,11 +380,28 @@ processo. Não há Prometheus, OpenTelemetry, dashboard nem agregação entre r�
 
 ## Autenticação
 
-Autenticação não foi implementada para preservar o foco do desafio em correção
-financeira. Em produção, um IdP OIDC externo seria integrado por um `AuthGuard` nos
-controllers de wallet/wagering, validando a identidade do provider contra a claim;
-health permaneceria público e SQS continuaria como canal interno confiável. Não foi
-adicionado guard no-op porque ele poderia sugerir uma proteção inexistente.
+Autenticação não foi implementada porque ela não pontua na avaliação do desafio. O
+timebox foi concentrado nos requisitos eliminatórios e pontuados: correção
+financeira, concorrência, idempotência, Inbox/Outbox e recuperação da mensageria.
+Não existe autenticação artesanal nem persistência local de usuários.
+
+Em produção, a aplicação seria registrada em um Identity Provider externo com
+OIDC, como Keycloak ou Zitadel. Um `AuthGuard` na camada HTTP validaria assinatura,
+issuer, audience e expiração do access token usando as chaves públicas do IdP. A
+claim que identifica o provider seria convertida em uma identidade autenticada e
+comparada ao `providerId` da requisição antes de o controller chamar
+`ProcessWagerTransactionUseCase`; os use cases continuariam independentes de OIDC.
+
+O ponto de extensão é a fronteira de apresentação: registrar o guard como
+`APP_GUARD` (ou aplicá-lo aos controllers de wallet/wagering) e introduzir ali um
+pequeno contrato de identidade do provider. Nenhum guard no-op foi adicionado,
+pois ele poderia sugerir uma proteção que não existe. `/health/live` e
+`/health/ready` continuariam públicos.
+
+Mensagens SQS são tratadas como um canal interno confiável e não carregam token de
+usuário. Ainda assim, o `providerId` do envelope não ignora as regras da aplicação:
+ele permanece parte do hash idempotente e das validações de referência e
+compatibilidade executadas pelo domínio.
 
 ## Garantias e limites atuais
 
