@@ -15,7 +15,6 @@ import {
   Logger,
   NotFoundException,
   ServiceUnavailableException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 
 import {
@@ -38,6 +37,16 @@ interface PostgreSqlConstraintError {
   constraint?: string;
 }
 
+const UNIQUE_CONSTRAINT_MESSAGES: Readonly<Record<string, string>> = {
+  wallets_player_id_currency_unique:
+    'Wallet already exists for this player and currency',
+  wager_transactions_idempotency_key_unique: 'Wager transaction already exists',
+  wager_transactions_provider_external_id_unique:
+    'Wager transaction already exists',
+  wager_transactions_reversal_once_idx:
+    'Reversal already processed for this reference',
+};
+
 function hasConstraint(
   exception: unknown,
 ): exception is UniqueConstraintViolationException & PostgreSqlConstraintError {
@@ -45,6 +54,38 @@ function hasConstraint(
     exception instanceof UniqueConstraintViolationException &&
     'constraint' in exception
   );
+}
+
+function mapExpectedException(exception: unknown): HttpException | undefined {
+  if (
+    exception instanceof InvalidMoneyAmountError ||
+    exception instanceof InvalidCurrencyError ||
+    exception instanceof MissingTransactionReferenceError ||
+    exception instanceof ExternalOpeningTransactionError ||
+    exception instanceof InvalidLedgerCursorError ||
+    exception instanceof WalletPlayerMismatchError
+  ) {
+    return new BadRequestException(exception.message);
+  }
+
+  if (exception instanceof IdempotencyConflictError) {
+    return new ConflictException(exception.message);
+  }
+
+  if (
+    exception instanceof WalletNotFoundError ||
+    exception instanceof WagerTransactionNotFoundError
+  ) {
+    return new NotFoundException(exception.message);
+  }
+
+  if (hasConstraint(exception)) {
+    const message = UNIQUE_CONSTRAINT_MESSAGES[exception.constraint ?? ''];
+
+    if (message) {
+      return new ConflictException(message);
+    }
+  }
 }
 
 @Catch()
@@ -70,54 +111,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         .json(exception.getResponse());
     }
 
-    if (
-      exception instanceof InvalidMoneyAmountError ||
-      exception instanceof InvalidCurrencyError ||
-      exception instanceof MissingTransactionReferenceError ||
-      exception instanceof ExternalOpeningTransactionError ||
-      exception instanceof InvalidLedgerCursorError
-    ) {
-      const error = new BadRequestException(exception.message);
+    const mappedException = mapExpectedException(exception);
 
-      return response.status(error.getStatus()).json(error.getResponse());
-    }
-
-    if (exception instanceof IdempotencyConflictError) {
-      const error = new ConflictException(exception.message);
-
-      return response.status(error.getStatus()).json(error.getResponse());
-    }
-
-    if (
-      exception instanceof WalletNotFoundError ||
-      exception instanceof WagerTransactionNotFoundError
-    ) {
-      const error = new NotFoundException(exception.message);
-
-      return response.status(error.getStatus()).json(error.getResponse());
-    }
-
-    if (exception instanceof WalletPlayerMismatchError) {
-      const error = new UnprocessableEntityException(exception.message);
-
-      return response.status(error.getStatus()).json(error.getResponse());
-    }
-
-    if (
-      hasConstraint(exception) &&
-      [
-        'wallets_player_id_currency_unique',
-        'wager_transactions_idempotency_key_unique',
-        'wager_transactions_provider_external_id_unique',
-      ].includes(exception.constraint ?? '')
-    ) {
-      const message =
-        exception.constraint === 'wallets_player_id_currency_unique'
-          ? 'Wallet already exists for this player and currency'
-          : 'Wager transaction already exists';
-      const error = new ConflictException(message);
-
-      return response.status(error.getStatus()).json(error.getResponse());
+    if (mappedException) {
+      return response
+        .status(mappedException.getStatus())
+        .json(mappedException.getResponse());
     }
 
     if (
@@ -125,6 +124,21 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       exception instanceof DeadlockException
     ) {
       this.metrics.recordLockConflict();
+      this.logger.error(
+        JSON.stringify({
+          event: 'http_transient_infrastructure_failure',
+          correlationId: request.headers?.['x-correlation-id'],
+          transactionId: request.params?.transactionId,
+          walletId: request.params?.walletId ?? request.body?.walletId,
+          providerId: request.params?.providerId ?? request.body?.providerId,
+          errorName: exception.name,
+        }),
+      );
+      const error = new ServiceUnavailableException(
+        'Infrastructure temporarily unavailable',
+      );
+
+      return response.status(error.getStatus()).json(error.getResponse());
     }
 
     if (exception instanceof DriverException) {
@@ -138,9 +152,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           errorName: exception.name,
         }),
       );
-      const error = new ServiceUnavailableException(
-        'Infrastructure temporarily unavailable',
-      );
+
+      const error = new InternalServerErrorException();
 
       return response.status(error.getStatus()).json(error.getResponse());
     }
